@@ -55,14 +55,26 @@ export function ImportForm() {
 
         <details className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
           <summary className="cursor-pointer font-medium text-slate-700">
-            Theme CSS (optional — paste the Lovable project&apos;s index.css for exact colors)
+            Exact design match (optional — paste the project&apos;s index.css and tailwind.config.ts)
           </summary>
-          <textarea
-            name="themeCss"
-            rows={6}
-            placeholder=":root { --primary: 262 83% 58%; ... }"
-            className="mt-3 w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-xs outline-none focus:border-indigo-500"
-          />
+          <label className="mt-3 block">
+            <span className="mb-1 block text-xs font-medium text-slate-600">src/index.css (theme variables)</span>
+            <textarea
+              name="themeCss"
+              rows={5}
+              placeholder=":root { --primary: 262 83% 58%; ... }"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-xs outline-none focus:border-indigo-500"
+            />
+          </label>
+          <label className="mt-3 block">
+            <span className="mb-1 block text-xs font-medium text-slate-600">tailwind.config.ts (custom colors, gradients, shadows, animations)</span>
+            <textarea
+              name="tailwindConfig"
+              rows={5}
+              placeholder="export default { theme: { extend: { ... } } }"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-xs outline-none focus:border-indigo-500"
+            />
+          </label>
         </details>
 
         {state.error ? (

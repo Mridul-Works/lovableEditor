@@ -21,9 +21,20 @@ model Page {
   tree        Json
   compiledCss String   @default("")
   report      Json?
+  // Set when the page was imported from a connected GitHub (Lovable) project;
+  // enables one-click re-sync. Null for paste imports.
+  sourceRepo   String? // "owner/name"
+  sourceBranch String?
+  sourcePath   String? // e.g. "src/pages/Index.tsx"
   fields      Field[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+// Small key/value store for admin-configured settings (e.g. github_token).
+model Setting {
+  key   String @id
+  value String
 }
 
 model Field {

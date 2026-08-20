@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { chromium, type Page } from "playwright";
 
-const BASE = "http://localhost:3000";
+const BASE = process.env.BASE ?? "http://localhost:3000";
 const ADMIN_EMAIL = "admin@example.com";
 const ADMIN_PASSWORD = "admin12345";
 

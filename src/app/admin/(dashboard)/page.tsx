@@ -42,7 +42,17 @@ export default async function PagesListPage() {
             <tbody>
               {pages.map((page) => (
                 <tr key={page.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
-                  <td className="px-4 py-3 font-mono text-slate-900">{page.route}</td>
+                  <td className="px-4 py-3 font-mono text-slate-900">
+                    {page.route}
+                    {page.sourceRepo ? (
+                      <span
+                        className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500"
+                        title={`${page.sourceRepo} · ${page.sourcePath}`}
+                      >
+                        GitHub
+                      </span>
+                    ) : null}
+                  </td>
                   <td className="max-w-64 truncate px-4 py-3">{page.title}</td>
                   <td className="px-4 py-3">
                     <span
@@ -64,6 +74,7 @@ export default async function PagesListPage() {
                       pageId={page.id}
                       route={page.route}
                       status={page.status as "DRAFT" | "PUBLISHED"}
+                      hasGithubSource={page.sourceRepo !== null}
                     />
                   </td>
                 </tr>

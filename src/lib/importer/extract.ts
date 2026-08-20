@@ -1,8 +1,8 @@
 import "server-only";
 import { createHash } from "node:crypto";
 import { parse } from "@babel/parser";
-import _traverse from "@babel/traverse";
 import type * as t from "@babel/types";
+import { twMerge } from "tailwind-merge";
 import type {
   ExtractedField,
   FieldRef,
@@ -19,8 +19,24 @@ import { lucideIconNode } from "./lucide";
 // never evaluated, compiled, or executed. Anything dynamic (state, handlers,
 // unresolvable expressions) is stripped and reported.
 
-const traverse: typeof _traverse =
-  (_traverse as unknown as { default?: typeof _traverse }).default ?? _traverse;
+// Note: the collection pass below uses a plain recursive walk instead of
+// @babel/traverse — traverse builds bindings and throws on the duplicate
+// declarations that concatenated multi-file pastes legitimately contain
+// (the same component imported in one file and declared in another).
+function walk(node: unknown, visit: (n: t.Node) => void) {
+  if (!node || typeof node !== "object") return;
+  if (Array.isArray(node)) {
+    for (const child of node) walk(child, visit);
+    return;
+  }
+  const n = node as t.Node & Record<string, unknown>;
+  if (typeof n.type !== "string") return;
+  visit(n);
+  for (const key of Object.keys(n)) {
+    if (key === "loc" || key === "leadingComments" || key === "trailingComments" || key === "innerComments") continue;
+    walk(n[key], visit);
+  }
+}
 
 const PLACEHOLDER_IMAGE =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='500'%3E%3Crect width='100%25' height='100%25' fill='%23e2e8f0'/%3E%3Ctext x='50%25' y='50%25' fill='%2394a3b8' font-family='sans-serif' font-size='28' text-anchor='middle' dominant-baseline='middle'%3EReplace this image%3C/text%3E%3C/svg%3E";
@@ -50,9 +66,73 @@ const VOID_TAGS = new Set([
   "param", "source", "track", "wbr",
 ]);
 
+// Default shadcn/ui classes, so passthrough components keep their real look
+// even though components/ui/*.tsx is never bundled or executed. Mirrors the
+// stock shadcn styles Lovable generates. Instance className wins via twMerge.
+const BUTTON_BASE =
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors";
+const BUTTON_VARIANTS: Record<string, string> = {
+  default: "bg-primary text-primary-foreground hover:bg-primary/90",
+  destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
+  outline: "border border-input bg-background hover:bg-accent hover:text-accent-foreground",
+  secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
+  ghost: "hover:bg-accent hover:text-accent-foreground",
+  link: "text-primary underline-offset-4 hover:underline",
+};
+const BUTTON_SIZES: Record<string, string> = {
+  default: "h-10 px-4 py-2",
+  sm: "h-9 rounded-md px-3",
+  lg: "h-11 rounded-md px-8",
+  icon: "h-10 w-10",
+};
+const BADGE_BASE =
+  "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors";
+const BADGE_VARIANTS: Record<string, string> = {
+  default: "border-transparent bg-primary text-primary-foreground",
+  secondary: "border-transparent bg-secondary text-secondary-foreground",
+  destructive: "border-transparent bg-destructive text-destructive-foreground",
+  outline: "text-foreground",
+};
+const SHADCN_STATIC_CLASSES: Record<string, string> = {
+  Card: "rounded-lg border bg-card text-card-foreground shadow-sm",
+  CardHeader: "flex flex-col space-y-1.5 p-6",
+  CardTitle: "text-2xl font-semibold leading-none tracking-tight",
+  CardDescription: "text-sm text-muted-foreground",
+  CardContent: "p-6 pt-0",
+  CardFooter: "flex items-center p-6 pt-0",
+  Input:
+    "flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-base ring-offset-background placeholder:text-muted-foreground md:text-sm",
+  Textarea:
+    "flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-base ring-offset-background placeholder:text-muted-foreground md:text-sm",
+  Label: "text-sm font-medium leading-none",
+  Separator: "shrink-0 bg-border h-[1px] w-full border-0",
+  Avatar: "relative flex h-10 w-10 shrink-0 overflow-hidden rounded-full",
+  AvatarImage: "aspect-square h-full w-full",
+  AvatarFallback: "flex h-full w-full items-center justify-center rounded-full bg-muted",
+};
+
+function shadcnDefaultClasses(name: string, props: Record<string, unknown>): string | undefined {
+  if (name === "Button") {
+    const variant = typeof props.variant === "string" ? props.variant : "default";
+    const size = typeof props.size === "string" ? props.size : "default";
+    return twMerge(BUTTON_BASE, BUTTON_VARIANTS[variant] ?? BUTTON_VARIANTS.default, BUTTON_SIZES[size] ?? BUTTON_SIZES.default);
+  }
+  if (name === "Badge") {
+    const variant = typeof props.variant === "string" ? props.variant : "default";
+    return twMerge(BADGE_BASE, BADGE_VARIANTS[variant] ?? BADGE_VARIANTS.default);
+  }
+  return SHADCN_STATIC_CLASSES[name];
+}
+
 type Scope = Map<string, t.Expression | number>;
 
+type ComponentFn = t.FunctionDeclaration | t.ArrowFunctionExpression | t.FunctionExpression;
+
 type Ctx = {
+  /** Components defined in the pasted source itself — inlined during conversion. */
+  localComponents: Map<string, ComponentFn>;
+  /** Names currently being inlined, to break recursion. */
+  inlineStack: string[];
   source: string;
   fields: ExtractedField[];
   usedKeys: Set<string>;
@@ -63,6 +143,8 @@ type Ctx = {
   lucide: Map<string, string>;
   /** local name → import source, for image asset imports */
   assetImports: Map<string, string>;
+  /** import specifier (as written) → uploaded URL, provided by the GitHub bundler */
+  assetUrls: Map<string, string>;
   stateInits: Map<string, t.Expression | undefined>;
   section: string;
   sectionCounts: Map<string, number>;
@@ -412,8 +494,14 @@ async function convertAttributes(
       } else {
         const e = unwrap(valueExpr);
         const importName = e.type === "Identifier" ? e.name : snippet(ctx, valueExpr);
-        note(ctx, `Image source "${importName}" could not be resolved (likely an imported asset file) — a placeholder was used; upload the real image in the editor.`);
-        url = PLACEHOLDER_IMAGE;
+        const importPath = e.type === "Identifier" ? ctx.assetImports.get(e.name) : undefined;
+        const uploaded = importPath ? ctx.assetUrls.get(importPath) : undefined;
+        if (uploaded) {
+          url = uploaded;
+        } else {
+          note(ctx, `Image source "${importName}" could not be resolved (likely an imported asset file) — a placeholder was used; upload the real image in the editor.`);
+          url = PLACEHOLDER_IMAGE;
+        }
       }
       const key = addField(ctx, "IMAGE", tag, url);
       props[name] = { $f: key } satisfies FieldRef;
@@ -746,6 +834,20 @@ async function convertElement(el: t.JSXElement, ctx: Ctx, inSvg: boolean): Promi
 
   if (nameStr === "Fragment") return convertChildren(el.children, ctx, "div", inSvg);
 
+  // Component defined in the pasted source itself (Lovable splits pages into
+  // section components — Header, Hero, ... — pasted together with the page):
+  // inline its returned JSX in place.
+  const local = ctx.localComponents.get(nameStr);
+  if (local && !ctx.inlineStack.includes(nameStr) && ctx.inlineStack.length < 20) {
+    const body = componentReturnExpr(local);
+    if (body) {
+      ctx.inlineStack.push(nameStr);
+      const nodes = await convertExpression(body, ctx, "div", inSvg);
+      ctx.inlineStack.pop();
+      return nodes;
+    }
+  }
+
   if (nameStr === "Link") {
     const { props } = await convertAttributes(el.openingElement.attributes, "a", ctx, inSvg);
     const children = await convertChildren(el.children, ctx, "a", inSvg);
@@ -758,6 +860,16 @@ async function convertElement(el: t.JSXElement, ctx: Ctx, inSvg: boolean): Promi
   const mapped = COMPONENT_TAG_MAP[nameStr];
   const tag = mapped ?? "div";
   const { props } = await convertAttributes(el.openingElement.attributes, tag, ctx, inSvg);
+
+  // Apply the component's stock shadcn styling; instance classes win.
+  const defaults = shadcnDefaultClasses(nameStr, props);
+  if (defaults) {
+    props.className = twMerge(defaults, typeof props.className === "string" ? props.className : "");
+  }
+  delete props.variant;
+  delete props.size;
+  delete props.asChild;
+
   const children = await convertChildren(el.children, ctx, tag, inSvg);
   const label = mapped ? `${nameStr} (rendered as <${mapped}>)` : `${nameStr} (rendered as <div>)`;
   if (!ctx.report.unknownComponents.includes(label)) ctx.report.unknownComponents.push(label);
@@ -772,13 +884,23 @@ async function convertElement(el: t.JSXElement, ctx: Ctx, inSvg: boolean): Promi
 // Section naming
 // ---------------------------------------------------------------------------
 
+function componentKebab(name: string) {
+  return name
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .replace(/([A-Z])([A-Z][a-z])/g, "$1-$2")
+    .toLowerCase();
+}
+
 function sectionSlugFor(el: t.JSXElement | undefined, index: number, ctx: Ctx): string {
   let base = `section-${index + 1}`;
   if (el) {
     const name = el.openingElement.name;
     const tag = name.type === "JSXIdentifier" ? name.name : "";
     let hint = "";
+    // A section component's own name is the best slug: <WhyRealEstate /> → why-real-estate
+    if (/^[A-Z]/.test(tag)) hint = componentKebab(tag);
     for (const attr of el.openingElement.attributes) {
+      if (hint) break;
       if (attr.type !== "JSXAttribute" || attr.name.type !== "JSXIdentifier") continue;
       if (attr.name.name !== "className" && attr.name.name !== "id") continue;
       let v = "";
@@ -805,6 +927,25 @@ function sectionSlugFor(el: t.JSXElement | undefined, index: number, ctx: Ctx): 
 }
 
 // ---------------------------------------------------------------------------
+// Component helpers
+// ---------------------------------------------------------------------------
+
+function asComponentFn(n: t.Node | undefined): ComponentFn | undefined {
+  return n && (n.type === "FunctionDeclaration" || n.type === "ArrowFunctionExpression" || n.type === "FunctionExpression")
+    ? n : undefined;
+}
+
+/** The expression a component function returns (its JSX, usually). */
+function componentReturnExpr(fn: ComponentFn): t.Expression | undefined {
+  if (fn.body.type !== "BlockStatement") return fn.body;
+  let ret: t.Expression | undefined;
+  for (const stmt of fn.body.body) {
+    if (stmt.type === "ReturnStatement" && stmt.argument) ret = stmt.argument;
+  }
+  return ret;
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -815,7 +956,10 @@ export type ExtractResult = {
   title: string;
 };
 
-export async function extractPage(source: string): Promise<ExtractResult> {
+export async function extractPage(
+  source: string,
+  options?: { assetUrls?: Map<string, string> },
+): Promise<ExtractResult> {
   const ast = parse(source, {
     sourceType: "module",
     plugins: ["jsx", "typescript"],
@@ -823,6 +967,8 @@ export async function extractPage(source: string): Promise<ExtractResult> {
   });
 
   const ctx: Ctx = {
+    localComponents: new Map(),
+    inlineStack: [],
     source,
     fields: [],
     usedKeys: new Set(),
@@ -834,6 +980,7 @@ export async function extractPage(source: string): Promise<ExtractResult> {
     consts: new Map(),
     lucide: new Map(),
     assetImports: new Map(),
+    assetUrls: options?.assetUrls ?? new Map(),
     stateInits: new Map(),
     section: "page",
     sectionCounts: new Map(),
@@ -843,75 +990,76 @@ export async function extractPage(source: string): Promise<ExtractResult> {
   let defaultExport: t.Node | undefined;
   const functions = new Map<string, t.FunctionDeclaration>();
 
-  traverse(ast, {
-    ImportDeclaration(path) {
-      const src = path.node.source.value;
-      for (const spec of path.node.specifiers) {
-        if (src === "lucide-react" && spec.type === "ImportSpecifier") {
-          const imported = spec.imported.type === "Identifier" ? spec.imported.name : spec.imported.value;
-          ctx.lucide.set(spec.local.name, imported);
-        } else if (/\.(png|jpe?g|svg|webp|gif|avif)$/i.test(src)) {
-          ctx.assetImports.set(spec.local.name, src);
-        }
-      }
-    },
-    VariableDeclaration(path) {
-      // Module-level and component-body consts both become resolvable data.
-      for (const decl of path.node.declarations) {
-        if (decl.id.type === "Identifier" && decl.init) {
-          ctx.consts.set(decl.id.name, decl.init);
-        } else if (
-          decl.id.type === "ArrayPattern" &&
-          decl.init?.type === "CallExpression" &&
-          decl.init.callee.type === "Identifier" &&
-          decl.init.callee.name === "useState"
-        ) {
-          const [stateId] = decl.id.elements;
-          if (stateId?.type === "Identifier") {
-            ctx.stateInits.set(stateId.name, decl.init.arguments[0] as t.Expression | undefined);
+  walk(ast.program, (node) => {
+    switch (node.type) {
+      case "ImportDeclaration": {
+        const src = node.source.value;
+        for (const spec of node.specifiers) {
+          if (src === "lucide-react" && spec.type === "ImportSpecifier") {
+            const imported = spec.imported.type === "Identifier" ? spec.imported.name : spec.imported.value;
+            ctx.lucide.set(spec.local.name, imported);
+          } else if (/\.(png|jpe?g|svg|webp|gif|avif)$/i.test(src)) {
+            ctx.assetImports.set(spec.local.name, src);
           }
         }
+        break;
       }
-    },
-    FunctionDeclaration(path) {
-      if (path.node.id && path.parent.type === "Program") functions.set(path.node.id.name, path.node);
-    },
-    ExportDefaultDeclaration(path) {
-      defaultExport = path.node.declaration;
-    },
+      case "VariableDeclaration": {
+        // Module-level and component-body consts both become resolvable data.
+        // A declaration never overwrites an already-collected component —
+        // in multi-file pastes an `import { Header }` line in another file
+        // must not shadow the real `const Header = ...` definition (imports
+        // aren't collected here, but two same-named consts can collide;
+        // first definition wins).
+        for (const decl of node.declarations) {
+          if (decl.id.type === "Identifier" && decl.init) {
+            if (!ctx.consts.has(decl.id.name)) ctx.consts.set(decl.id.name, decl.init);
+          } else if (
+            decl.id.type === "ArrayPattern" &&
+            decl.init?.type === "CallExpression" &&
+            decl.init.callee.type === "Identifier" &&
+            decl.init.callee.name === "useState"
+          ) {
+            const [stateId] = decl.id.elements;
+            if (stateId?.type === "Identifier") {
+              ctx.stateInits.set(stateId.name, decl.init.arguments[0] as t.Expression | undefined);
+            }
+          }
+        }
+        break;
+      }
+      case "FunctionDeclaration":
+        if (node.id && !functions.has(node.id.name)) functions.set(node.id.name, node);
+        break;
+      case "ExportDefaultDeclaration":
+        defaultExport = node.declaration;
+        break;
+    }
   });
 
-  // Locate the component function
-  let component: t.FunctionDeclaration | t.ArrowFunctionExpression | t.FunctionExpression | undefined;
-  const asFn = (n: t.Node | undefined) =>
-    n && (n.type === "FunctionDeclaration" || n.type === "ArrowFunctionExpression" || n.type === "FunctionExpression")
-      ? n : undefined;
+  // Register every component defined in the pasted source (PascalCase name,
+  // function returning something) so <Header /> etc. can be inlined.
+  for (const [name, fn] of functions) {
+    if (/^[A-Z]/.test(name)) ctx.localComponents.set(name, fn);
+  }
+  for (const [name, init] of ctx.consts) {
+    const fn = asComponentFn(init);
+    if (fn && /^[A-Z]/.test(name)) ctx.localComponents.set(name, fn);
+  }
 
-  component = asFn(defaultExport);
+  // Locate the page component
+  let component = asComponentFn(defaultExport);
   if (!component && defaultExport?.type === "Identifier") {
-    component = functions.get(defaultExport.name) ?? asFn(ctx.consts.get(defaultExport.name));
+    component = functions.get(defaultExport.name) ?? asComponentFn(ctx.consts.get(defaultExport.name));
   }
   if (!component) {
-    // Fallback: first top-level function that returns JSX
-    for (const fn of functions.values()) { component = fn; break; }
-    if (!component) {
-      for (const init of ctx.consts.values()) {
-        const fn = asFn(init);
-        if (fn) { component = fn; break; }
-      }
-    }
+    // Fallback: first top-level function component
+    component = ctx.localComponents.values().next().value;
   }
   if (!component) throw new Error("Could not find a React component in the pasted code. Paste the full exported page component.");
 
   // Find the returned JSX
-  let rootExpr: t.Expression | undefined;
-  if (component.body.type !== "BlockStatement") {
-    rootExpr = component.body;
-  } else {
-    for (const stmt of component.body.body) {
-      if (stmt.type === "ReturnStatement" && stmt.argument) rootExpr = stmt.argument;
-    }
-  }
+  let rootExpr = componentReturnExpr(component);
   if (!rootExpr) throw new Error("The component has no return statement with JSX.");
   rootExpr = unwrap(rootExpr);
   if (rootExpr.type !== "JSXElement" && rootExpr.type !== "JSXFragment") {
@@ -933,7 +1081,20 @@ export async function extractPage(source: string): Promise<ExtractResult> {
 
   let container: JsxParent = rootExpr;
   const wrappers: t.JSXElement[] = [];
-  while (container.type === "JSXElement") {
+  for (let hops = 0; hops < 30 && container.type === "JSXElement"; hops++) {
+    const cname = elementNameToString(container.openingElement.name);
+    // Step transparently through a local component boundary (<HomePage/> whose
+    // body holds the real sections).
+    const localFn = ctx.localComponents.get(cname);
+    if (localFn) {
+      const inner = componentReturnExpr(localFn);
+      const unwrapped = inner ? unwrap(inner) : undefined;
+      if (unwrapped && (unwrapped.type === "JSXElement" || unwrapped.type === "JSXFragment")) {
+        container = unwrapped;
+        continue;
+      }
+      break;
+    }
     const kids = elementChildren(container);
     if (kids.length === 1 && kids[0].type === "JSXElement") {
       wrappers.push(container);

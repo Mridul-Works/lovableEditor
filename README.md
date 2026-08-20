@@ -7,8 +7,19 @@ with no rebuilds or redeploys.
 
 ## How it works
 
+**Connected mode (recommended):** Lovable syncs every project to GitHub (free plan
+included). Connect that GitHub account once under **Admin → Lovable projects** (read-only
+fine-grained token, or `GITHUB_TOKEN` in `.env`). You then browse all your projects, open
+one, and import any of its pages with one click — the app pulls the page file, follows its
+imports to bundle every section component, applies the project's `index.css` theme, and
+uploads the repo's image assets into the media library. After design changes in Lovable,
+hit **Sync** on the page (pages list or project view) — content edits survive.
+
+**Paste mode (fallback):**
+
 1. **Import** (`/admin/import`) — paste the exported page component (TSX/JSX) and pick a
-   route (e.g. `/pricing`). The code is parsed with Babel **as data — it is never
+   route (e.g. `/pricing`). If the page is split into components, paste the page file plus
+   each component file together in one paste. The code is parsed with Babel **as data — it is never
    executed**. The JSX becomes a JSON render tree; every visible string (including `alt`,
    `title`, `placeholder`, `aria-label`) and every image becomes an editable **field**
    with a stable key (`hero-h1-a3f2` = section + tag + content hash). Tailwind CSS for
@@ -54,7 +65,8 @@ Log in at `/admin/login` with the seeded credentials.
 
 - `npm run dev` / `build` / `start` — Next.js
 - `npm run db:migrate` / `db:seed` / `db:studio` — Prisma
-- `npx tsx scripts/e2e.ts` — full acceptance test (needs the app running on :3000 and Edge installed)
+- `npx tsx scripts/e2e.ts` — full acceptance test (needs the app running on :3000 and Edge installed; `BASE=` overrides the URL)
+- GitHub-integration test: `npx tsx scripts/mock-github.ts` (mock API on :4599), then the app with `GITHUB_API_BASE=http://127.0.0.1:4599`, then `BASE=... npx tsx scripts/e2e-github.ts`
 - `NODE_OPTIONS=--conditions=react-server npx tsx scripts/test-extract.ts [file]` — run the extractor against a fixture
 
 ## Architecture notes

@@ -5,8 +5,10 @@ import { redirect } from "next/navigation";
 import { imageSize } from "image-size";
 import { db } from "@/lib/db";
 import { getSession, loginWithCredentials, logout, requireAdmin } from "@/lib/auth";
-import { extractPage, normalizeRoute } from "@/lib/importer/extract";
-import { compilePageCss } from "@/lib/importer/tailwind";
+import { normalizeRoute } from "@/lib/importer/extract";
+import { importPageFromSource } from "@/lib/importer/import-page";
+import { bundlePageFromRepo } from "@/lib/importer/bundle";
+import { getGithubToken, getRepo, getTree, setGithubToken, listRepos } from "@/lib/github";
 import { pageCacheTag } from "@/lib/pages";
 import { ALLOWED_IMAGE_TYPES, storage } from "@/lib/storage";
 import type { ImportReport } from "@/lib/tree";
@@ -65,96 +67,162 @@ export async function importPageAction(_prev: ImportState, formData: FormData): 
   }
 
   const themeCss = String(formData.get("themeCss") ?? "").slice(0, 200_000);
+  const tailwindConfig = String(formData.get("tailwindConfig") ?? "").slice(0, 200_000);
 
   try {
-    const { tree, fields, report, title } = await extractPage(source);
-    const compiledCss = await compilePageCss(tree, themeCss || undefined);
-    const requestedTitle = String(formData.get("title") ?? "").trim();
-
-    const existing = await db.page.findUnique({ where: { route }, include: { fields: true } });
-
-    if (!existing) {
-      const page = await db.page.create({
-        data: {
-          route,
-          title: requestedTitle || title,
-          rawSource: source,
-          tree: JSON.parse(JSON.stringify(tree)),
-          compiledCss,
-          report: JSON.parse(JSON.stringify(report)),
-          fields: {
-            create: fields.map((f) => ({
-              key: f.key, type: f.type, defaultValue: f.defaultValue,
-              label: f.label, section: f.section, sortOrder: f.sortOrder,
-            })),
-          },
-        },
-      });
-      updateTag(pageCacheTag(route));
-      revalidatePath(route);
-      revalidatePath("/admin");
-      return { report, pageId: page.id, route };
-    }
-
-    // Re-import: merge by field key. Existing keys keep their edited value,
-    // new keys are added, keys no longer present are flagged orphaned.
-    const incomingByKey = new Map(fields.map((f) => [f.key, f]));
-    const existingByKey = new Map(existing.fields.map((f) => [f.key, f]));
-
-    let kept = 0, added = 0, orphaned = 0;
-    const ops = [];
-
-    for (const f of fields) {
-      const prior = existingByKey.get(f.key);
-      if (prior) {
-        kept++;
-        ops.push(db.field.update({
-          where: { id: prior.id },
-          data: {
-            type: f.type, defaultValue: f.defaultValue, label: f.label,
-            section: f.section, sortOrder: f.sortOrder, orphaned: false,
-          },
-        }));
-      } else {
-        added++;
-        ops.push(db.field.create({
-          data: {
-            pageId: existing.id, key: f.key, type: f.type, defaultValue: f.defaultValue,
-            label: f.label, section: f.section, sortOrder: f.sortOrder,
-          },
-        }));
-      }
-    }
-    for (const prior of existing.fields) {
-      if (!incomingByKey.has(prior.key) && !prior.orphaned) {
-        orphaned++;
-        ops.push(db.field.update({ where: { id: prior.id }, data: { orphaned: true } }));
-      } else if (!incomingByKey.has(prior.key)) {
-        orphaned++; // already orphaned, keep counting for the report
-      }
-    }
-
-    report.merge = { kept, added, orphaned };
-
-    ops.push(db.page.update({
-      where: { id: existing.id },
-      data: {
-        title: requestedTitle || existing.title,
-        rawSource: source,
-        tree: JSON.parse(JSON.stringify(tree)),
-        compiledCss,
-        report: JSON.parse(JSON.stringify(report)),
-      },
-    }));
-
-    await db.$transaction(ops);
+    const outcome = await importPageFromSource({
+      route,
+      title: String(formData.get("title") ?? ""),
+      source,
+      themeCss: themeCss || undefined,
+      tailwindConfig: tailwindConfig || undefined,
+    });
     updateTag(pageCacheTag(route));
     revalidatePath(route);
     revalidatePath("/admin");
-    revalidatePath(`/admin/pages/${existing.id}`);
-    return { report, pageId: existing.id, route, reimported: true };
+    if (outcome.reimported) revalidatePath(`/admin/pages/${outcome.pageId}`);
+    return {
+      report: outcome.report,
+      pageId: outcome.pageId,
+      route,
+      reimported: outcome.reimported,
+    };
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Import failed." };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// GitHub (Lovable projects) connection
+// ---------------------------------------------------------------------------
+
+export type ConnectState = { error?: string; ok?: boolean };
+
+export async function connectGithubAction(_prev: ConnectState, formData: FormData): Promise<ConnectState> {
+  await requireAdmin();
+  const token = String(formData.get("token") ?? "").trim();
+  if (!token) return { error: "Paste a GitHub personal access token." };
+  try {
+    await listRepos(token); // validate before storing
+    await setGithubToken(token);
+    revalidatePath("/admin/projects");
+    return { ok: true };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Could not reach GitHub with that token." };
+  }
+}
+
+export async function disconnectGithubAction() {
+  await requireAdmin();
+  await setGithubToken(null);
+  revalidatePath("/admin/projects");
+}
+
+export type GithubImportState = {
+  error?: string;
+  report?: ImportReport;
+  pageId?: string;
+  route?: string;
+  reimported?: boolean;
+  filesBundled?: number;
+  assetsUploaded?: number;
+};
+
+export async function importFromGithubAction(
+  _prev: GithubImportState,
+  formData: FormData,
+): Promise<GithubImportState> {
+  await requireAdmin();
+  const owner = String(formData.get("owner") ?? "");
+  const repo = String(formData.get("repo") ?? "");
+  const pagePath = String(formData.get("pagePath") ?? "");
+
+  let route: string;
+  try {
+    route = normalizeRoute(String(formData.get("route") ?? ""));
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Invalid route." };
+  }
+
+  try {
+    const token = await getGithubToken();
+    if (!token) return { error: "GitHub is not connected." };
+
+    const repoInfo = await getRepo(token, owner, repo);
+    const branch = repoInfo.defaultBranch;
+    const tree = await getTree(token, owner, repo, branch);
+    const bundle = await bundlePageFromRepo({ token, owner, repo, branch }, pagePath, tree);
+
+    const outcome = await importPageFromSource({
+      route,
+      source: bundle.source,
+      themeCss: bundle.themeCss,
+      tailwindConfig: bundle.tailwindConfig,
+      indexHtml: bundle.indexHtml,
+      assetUrls: bundle.assetUrls,
+      origin: { repo: `${owner}/${repo}`, branch, path: pagePath },
+    });
+
+    updateTag(pageCacheTag(route));
+    revalidatePath(route);
+    revalidatePath("/admin");
+    revalidatePath(`/admin/projects/${owner}/${repo}`);
+    return {
+      report: outcome.report,
+      pageId: outcome.pageId,
+      route,
+      reimported: outcome.reimported,
+      filesBundled: bundle.filesBundled.length,
+      assetsUploaded: bundle.assetsUploaded.length,
+    };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "GitHub import failed." };
+  }
+}
+
+/** Re-pull a GitHub-sourced page from its repo and re-import (edits survive). */
+export async function syncPageAction(pageId: string): Promise<GithubImportState> {
+  await requireAdmin();
+  const page = await db.page.findUnique({ where: { id: pageId } });
+  if (!page) return { error: "Page not found." };
+  if (!page.sourceRepo || !page.sourcePath) {
+    return { error: "This page was imported by paste — re-import it from the Import screen." };
+  }
+
+  try {
+    const token = await getGithubToken();
+    if (!token) return { error: "GitHub is not connected." };
+
+    const [owner, repo] = page.sourceRepo.split("/");
+    const repoInfo = await getRepo(token, owner, repo);
+    const branch = repoInfo.defaultBranch;
+    const tree = await getTree(token, owner, repo, branch);
+    const bundle = await bundlePageFromRepo({ token, owner, repo, branch }, page.sourcePath, tree);
+
+    const outcome = await importPageFromSource({
+      route: page.route,
+      source: bundle.source,
+      themeCss: bundle.themeCss,
+      tailwindConfig: bundle.tailwindConfig,
+      indexHtml: bundle.indexHtml,
+      assetUrls: bundle.assetUrls,
+      origin: { repo: page.sourceRepo, branch, path: page.sourcePath },
+    });
+
+    updateTag(pageCacheTag(page.route));
+    revalidatePath(page.route);
+    revalidatePath("/admin");
+    revalidatePath(`/admin/pages/${pageId}`);
+    return {
+      report: outcome.report,
+      pageId: outcome.pageId,
+      route: page.route,
+      reimported: outcome.reimported,
+      filesBundled: bundle.filesBundled.length,
+      assetsUploaded: bundle.assetsUploaded.length,
+    };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Sync failed." };
   }
 }
 

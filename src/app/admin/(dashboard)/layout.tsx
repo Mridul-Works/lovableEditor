@@ -17,7 +17,8 @@ export default async function AdminLayout({ children }: { children: ReactNode })
         </div>
         <nav className="flex flex-1 flex-col gap-1 p-3 text-sm font-medium">
           <Link href="/admin" className="rounded-lg px-3 py-2 hover:bg-slate-100">Pages</Link>
-          <Link href="/admin/import" className="rounded-lg px-3 py-2 hover:bg-slate-100">Import</Link>
+          <Link href="/admin/projects" className="rounded-lg px-3 py-2 hover:bg-slate-100">Lovable projects</Link>
+          <Link href="/admin/import" className="rounded-lg px-3 py-2 hover:bg-slate-100">Paste import</Link>
           <Link href="/admin/media" className="rounded-lg px-3 py-2 hover:bg-slate-100">Media</Link>
         </nav>
         <div className="border-t border-slate-200 p-3 text-xs text-slate-500">
