@@ -97,14 +97,21 @@ function sanitizeCssInput(css: string) {
   return css
     .replace(/@import[^;]*;/g, "")
     .replace(/@tailwind[^;]*;/g, "")
+    // Tailwind v4 content globs are relative to the project we don't have on
+    // disk; left in, the compiler would try to scan a path that isn't there.
+    .replace(/@source[^;]*;/g, "")
     .replace(/<\/?script/gi, "");
 }
 
-/** Google Fonts stylesheets referenced by the project's index.html. */
-function googleFontImports(indexHtml: string | undefined): string[] {
-  if (!indexHtml) return [];
+/**
+ * Google Fonts stylesheets the project links. Matches both the HTML attribute
+ * (`href="..."` in index.html) and the JS property (`href: "..."` in a
+ * TanStack Start route's head() links array).
+ */
+function googleFontImports(headSource: string | undefined): string[] {
+  if (!headSource) return [];
   const urls = new Set<string>();
-  for (const m of indexHtml.matchAll(/href=["'](https:\/\/fonts\.googleapis\.com\/css2?[^"']+)["']/g)) {
+  for (const m of headSource.matchAll(/href\s*[=:]\s*["'](https:\/\/fonts\.googleapis\.com\/css2?[^"']+)["']/g)) {
     urls.add(m[1].replace(/&amp;/g, "&"));
   }
   return [...urls].map((u) => `@import url("${u}");`);
@@ -115,9 +122,43 @@ export type CompileCssOptions = {
   themeCss?: string;
   /** The project's tailwind.config.ts/js source — translated, not executed. */
   tailwindConfig?: string;
-  /** The project's index.html — mined for Google Fonts links. */
+  /** The project's index.html, or its TanStack root route — mined for Google Fonts links. */
   indexHtml?: string;
 };
+
+/**
+ * Scroll-reveal CSS parks content at `opacity: 0` (usually with a translate
+ * offset) until a script adds a state class such as `.is-revealed`:
+ *
+ *   .mv-section .mv-reveal            { opacity: 0; transform: translateY(28px); transition: opacity 700ms }
+ *   .mv-section.is-revealed .mv-reveal { opacity: 1; transform: none }
+ *
+ * That script never runs here, so the content stays invisible forever. Emit the
+ * finished state as a same-specificity override placed after the project sheet.
+ * Only rules that pair `opacity: 0` with an opacity transition are touched —
+ * that combination is what marks a start-of-animation state rather than a
+ * deliberately hidden element.
+ */
+function revealOnScrollOverrides(themeCss: string | undefined): string {
+  if (!themeCss) return "";
+  const selectors = new Set<string>();
+  for (const m of themeCss.matchAll(/([^{}@]+)\{([^{}]*)\}/g)) {
+    const selector = m[1].trim();
+    const body = m[2];
+    if (!selector || selector.startsWith("@") || selector.includes(":")) continue;
+    if (!/opacity\s*:\s*0\s*[;}]/.test(body)) continue;
+    if (!/transition[^;]*opacity/.test(body)) continue;
+    selectors.add(selector);
+  }
+  if (selectors.size === 0) return "";
+  return (
+    "\n/* Static snapshot: scroll-reveal start states resolved to their end state. */\n" +
+    [...selectors]
+      .map((sel) => `${sel} { opacity: 1; transform: none; transition: none; }`)
+      .join("\n") +
+    "\n"
+  );
+}
 
 export async function compilePageCss(tree: TreeNode[], options?: CompileCssOptions): Promise<string> {
   const candidates = [...collectClassCandidates(tree)];
@@ -130,6 +171,7 @@ export async function compilePageCss(tree: TreeNode[], options?: CompileCssOptio
 ${shadcnThemeBlocks(options?.themeCss)}
 ${configCss}
 ${options?.themeCss ? sanitizeCssInput(options.themeCss) : ""}
+${revealOnScrollOverrides(options?.themeCss)}
 `;
 
   const compiler = await compile(input, {

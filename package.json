@@ -9,7 +9,11 @@
     "lint": "eslint",
     "db:migrate": "prisma migrate dev",
     "db:seed": "tsx prisma/seed.ts",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "test": "npm run test:server && npm run test:client",
+    "test:server": "node --import tsx --conditions=react-server --test \"src/lib/**/*.test.ts\"",
+    "test:client": "node --import tsx --test \"src/components/**/*.test.tsx\"",
+    "test:e2e": "node e2e/smoke.mjs"
   },
   "dependencies": {
     "@babel/parser": "^8.0.4",

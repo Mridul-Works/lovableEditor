@@ -32,13 +32,24 @@ export const ALLOWED_IMAGE_TYPES: Record<string, string> = {
   "image/avif": ".avif",
 };
 
+// Fonts are stored too (self-hosted @font-face files pulled from Lovable
+// project repos) but are not offered in the media-library UI.
+export const ALLOWED_FONT_TYPES: Record<string, string> = {
+  "font/ttf": ".ttf",
+  "font/otf": ".otf",
+  "font/woff": ".woff",
+  "font/woff2": ".woff2",
+};
+
+const ALLOWED_UPLOAD_TYPES: Record<string, string> = { ...ALLOWED_IMAGE_TYPES, ...ALLOWED_FONT_TYPES };
+
 const EXT_TO_TYPE = Object.fromEntries(
-  Object.entries(ALLOWED_IMAGE_TYPES).map(([type, ext]) => [ext, type]),
+  Object.entries(ALLOWED_UPLOAD_TYPES).map(([type, ext]) => [ext, type]),
 );
 
 function uploadsDir() {
   const dir = process.env.UPLOADS_DIR || "./uploads";
-  return path.isAbsolute(dir) ? dir : path.join(process.cwd(), dir);
+  return path.isAbsolute(dir) ? dir : path.join(/*turbopackIgnore: true*/ process.cwd(), dir);
 }
 
 function sanitizeName(name: string) {
@@ -54,8 +65,8 @@ function sanitizeName(name: string) {
 
 class LocalDriver implements StorageDriver {
   async put(buffer: Buffer, originalName: string, contentType: string): Promise<StoredFile> {
-    const ext = ALLOWED_IMAGE_TYPES[contentType];
-    if (!ext) throw new Error(`Unsupported image type: ${contentType}`);
+    const ext = ALLOWED_UPLOAD_TYPES[contentType];
+    if (!ext) throw new Error(`Unsupported file type: ${contentType}`);
     const hash = createHash("sha1").update(buffer).digest("hex").slice(0, 8);
     const filename = `${hash}-${sanitizeName(originalName)}${ext}`;
     const dir = uploadsDir();

@@ -68,5 +68,9 @@ model AdminUser {
   id           String   @id @default(cuid())
   email        String   @unique
   passwordHash String
+  // Sessions issued before this instant are rejected. Logging out moves it
+  // forward, so a stolen token stops working instead of staying valid for the
+  // rest of its 7-day life.
+  sessionsFrom DateTime @default(now())
   createdAt    DateTime @default(now())
 }

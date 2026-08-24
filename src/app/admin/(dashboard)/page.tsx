@@ -8,6 +8,9 @@ export default async function PagesListPage() {
   const pages = await db.page.findMany({
     orderBy: { updatedAt: "desc" },
     include: { _count: { select: { fields: true } } },
+    // A CMS this size never has hundreds of pages; the cap is a backstop so a
+    // runaway import cannot render an unbounded table.
+    take: 200,
   });
 
   return (

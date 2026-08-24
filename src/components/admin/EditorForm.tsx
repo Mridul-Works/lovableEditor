@@ -39,6 +39,11 @@ export function EditorForm({
   );
   const [savedValues, setSavedValues] = useState(values);
   const [pickerFor, setPickerFor] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  // A re-synced page can carry well over a thousand fields. Rendering them all
+  // at once makes the editor unusable, so large pages start collapsed and are
+  // opened one section at a time.
+  const [openSections, setOpenSections] = useState<Set<string>>(new Set());
   const [message, setMessage] = useState<string | null>(null);
   const [saving, startSaving] = useTransition();
 
@@ -57,17 +62,47 @@ export function EditorForm({
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty]);
 
+  const COLLAPSE_ABOVE = 150;
+  const startsCollapsed = fields.length > COLLAPSE_ABOVE;
+
   const groups = useMemo(() => {
-    const active = fields.filter((f) => !f.orphaned);
-    const orphaned = fields.filter((f) => f.orphaned);
+    const needle = query.trim().toLowerCase();
+    const matches = (f: FieldData) =>
+      !needle ||
+      f.label.toLowerCase().includes(needle) ||
+      f.defaultValue.toLowerCase().includes(needle) ||
+      (f.value ?? "").toLowerCase().includes(needle) ||
+      f.key.toLowerCase().includes(needle);
+
+    const active = fields.filter((f) => !f.orphaned && matches(f));
+    const orphaned = fields.filter((f) => f.orphaned && matches(f));
     const bySection = new Map<string, FieldData[]>();
     for (const f of active) {
       const list = bySection.get(f.section) ?? [];
       list.push(f);
       bySection.set(f.section, list);
     }
-    return { sections: [...bySection.entries()], orphaned };
-  }, [fields]);
+    return { sections: [...bySection.entries()], orphaned, total: active.length };
+  }, [fields, query]);
+
+  // Searching should show what it found, not hide it behind a collapsed header.
+  const searching = query.trim().length > 0;
+  const isOpen = (section: string) =>
+    searching || openSections.has(section) || (!startsCollapsed && !openSections.has(`closed:${section}`));
+
+  const toggleSection = (section: string) =>
+    setOpenSections((prev) => {
+      const next = new Set(prev);
+      const open = isOpen(section);
+      if (open) {
+        next.delete(section);
+        if (!startsCollapsed) next.add(`closed:${section}`);
+      } else {
+        next.delete(`closed:${section}`);
+        next.add(section);
+      }
+      return next;
+    });
 
   const setValue = (id: string, v: string | null) => setValues((prev) => ({ ...prev, [id]: v }));
 
@@ -88,12 +123,33 @@ export function EditorForm({
 
   return (
     <div className="space-y-6 pb-24">
+      <div className="sticky top-0 z-10 -mx-1 flex items-center gap-3 bg-slate-100/95 px-1 py-3 backdrop-blur">
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={`Search ${fields.length} fields by text or name...`}
+          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+        />
+        <span className="shrink-0 text-xs font-medium text-slate-500">
+          {groups.total} shown
+        </span>
+      </div>
+
       {groups.sections.map(([section, sectionFields]) => (
         <section key={section} className="rounded-xl border border-slate-200 bg-white">
-          <h2 className="border-b border-slate-100 px-5 py-3 text-sm font-bold uppercase tracking-wide text-slate-500">
-            {sectionTitle(section)}
-          </h2>
-          <div className="space-y-5 p-5">
+          <button
+            type="button"
+            onClick={() => toggleSection(section)}
+            className="flex w-full items-center justify-between border-b border-slate-100 px-5 py-3 text-left text-sm font-bold uppercase tracking-wide text-slate-500 hover:bg-slate-50"
+          >
+            <span>{sectionTitle(section)}</span>
+            <span className="flex items-center gap-2 text-xs font-medium normal-case tracking-normal text-slate-400">
+              {sectionFields.length} field{sectionFields.length === 1 ? "" : "s"}
+              <span aria-hidden>{isOpen(section) ? "\u2212" : "+"}</span>
+            </span>
+          </button>
+          <div className={isOpen(section) ? "space-y-5 p-5" : "hidden"}>
             {sectionFields.map((f) =>
               f.type === "IMAGE" ? (
                 <ImageFieldRow

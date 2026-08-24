@@ -18,6 +18,8 @@ export type ImportInput = {
   assetUrls?: Map<string, string>;
   /** GitHub origin, when imported from a connected project. */
   origin?: { repo: string; branch: string; path: string };
+  /** Set when the bundler hit its file cap and some components were left out. */
+  truncated?: boolean;
 };
 
 export type ImportOutcome = {
@@ -31,6 +33,12 @@ export async function importPageFromSource(input: ImportInput): Promise<ImportOu
   const { tree, fields, report, title } = await extractPage(input.source, {
     assetUrls: input.assetUrls,
   });
+  if (input.truncated) {
+    report.notes.push(
+      "This page imports more files than the bundler follows, so some components were left out. " +
+        "Sections that look empty are the ones that were skipped.",
+    );
+  }
   const compiledCss = await compilePageCss(tree, {
     themeCss: input.themeCss || undefined,
     tailwindConfig: input.tailwindConfig || undefined,
@@ -98,11 +106,17 @@ export async function importPageFromSource(input: ImportInput): Promise<ImportOu
     }
   }
   for (const prior of existing.fields) {
-    if (!incomingByKey.has(prior.key)) {
-      orphaned++;
-      if (!prior.orphaned) {
-        ops.push(db.field.update({ where: { id: prior.id }, data: { orphaned: true } }));
-      }
+    if (incomingByKey.has(prior.key)) continue;
+    // An orphan the admin never edited holds nothing worth keeping, and leaving
+    // them behind means every re-sync grows the table forever. One the admin DID
+    // edit is kept and flagged, so the work can still be recovered.
+    if (prior.value === null) {
+      ops.push(db.field.delete({ where: { id: prior.id } }));
+      continue;
+    }
+    orphaned++;
+    if (!prior.orphaned) {
+      ops.push(db.field.update({ where: { id: prior.id }, data: { orphaned: true } }));
     }
   }
 

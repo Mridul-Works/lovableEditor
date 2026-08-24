@@ -11,7 +11,7 @@ import type {
   StyleValue,
   TreeNode,
 } from "@/lib/tree";
-import { FIELD_META_DESCRIPTION, FIELD_META_TITLE } from "@/lib/tree";
+import { FIELD_META_DESCRIPTION, FIELD_META_TITLE, isFieldRef } from "@/lib/tree";
 import { lucideIconNode } from "./lucide";
 
 // Converts pasted Lovable/React component source into a JSON render tree plus
@@ -60,6 +60,25 @@ const COMPONENT_TAG_MAP: Record<string, string> = {
   Tabs: "div", TabsList: "div", TabsTrigger: "button", TabsContent: "div",
   Dialog: "div", Sheet: "div", Tooltip: "span", ScrollArea: "div", AspectRatio: "div",
 };
+
+// framer-motion / motion primitives: <motion.div>, <m.section>, <motion.a>.
+// The namespace object is the animation library; the property is a real tag.
+const MOTION_NAMESPACES = new Set(["motion", "m"]);
+
+/** Props that only exist for the animation runtime and mean nothing statically. */
+const MOTION_PROPS = [
+  "initial", "animate", "exit", "transition", "variants", "viewport",
+  "whileInView", "whileHover", "whileTap", "whileFocus", "whileDrag",
+  "layout", "layoutId", "layoutScroll", "layoutRoot", "layoutDependency",
+  "drag", "dragConstraints", "dragElastic", "dragMomentum", "dragSnapToOrigin",
+  "custom", "inherit", "onAnimationStart", "onAnimationComplete", "onUpdate",
+];
+
+function motionElementTag(name: t.JSXMemberExpression): string | undefined {
+  if (name.object.type !== "JSXIdentifier" || !MOTION_NAMESPACES.has(name.object.name)) return undefined;
+  const tag = name.property.name;
+  return /^[a-z][a-z0-9-]*$/.test(tag) ? tag : undefined;
+}
 
 const VOID_TAGS = new Set([
   "img", "br", "hr", "input", "area", "base", "col", "embed", "link", "meta",
@@ -128,11 +147,20 @@ type Scope = Map<string, t.Expression | number>;
 
 type ComponentFn = t.FunctionDeclaration | t.ArrowFunctionExpression | t.FunctionExpression;
 
+/** One inlining level's `children`, and whether the body actually rendered them. */
+type ChildrenFrame = { nodes: TreeNode[]; used: boolean };
+
 type Ctx = {
   /** Components defined in the pasted source itself — inlined during conversion. */
   localComponents: Map<string, ComponentFn>;
   /** Names currently being inlined, to break recursion. */
   inlineStack: string[];
+  /** Every function declared in the source, for resolving data-helper calls. */
+  functions: Map<string, ComponentFn>;
+  /** Helper calls being resolved, to break recursion. */
+  callStack: string[];
+  /** Children handed to the component being inlined, for its {children} slot. */
+  childrenStack: ChildrenFrame[];
   source: string;
   fields: ExtractedField[];
   usedKeys: Set<string>;
@@ -226,28 +254,315 @@ function resolveExpr(expr: t.Expression, ctx: Ctx, depth = 0): t.Expression | nu
     if (!e.computed && e.property.type === "Identifier") key = e.property.name;
     else if (e.property.type === "StringLiteral") key = e.property.value;
     else if (e.property.type === "NumericLiteral") key = e.property.value;
+    else if (e.computed) {
+      // A computed index that is itself static: CHAPTERS[index] with index from
+      // useState(0), PHOTOS[person.name], items[i] inside an expanded map.
+      const computed = staticValue(e.property, ctx, depth + 1);
+      if (typeof computed === "string" || typeof computed === "number") key = computed;
+    }
     if (key === undefined) return undefined;
 
     if (obj.type === "ObjectExpression") {
-      for (const prop of obj.properties) {
-        if (prop.type !== "ObjectProperty") continue;
-        const name = prop.key.type === "Identifier" ? prop.key.name
-          : prop.key.type === "StringLiteral" ? prop.key.value : undefined;
-        if (name === String(key)) return resolveExpr(prop.value as t.Expression, ctx, depth + 1) ?? (prop.value as t.Expression);
+      for (const prop of objectProperties(obj, ctx, depth)) {
+        if (propertyName(prop) === String(key)) {
+          return resolveExpr(prop.value as t.Expression, ctx, depth + 1) ?? (prop.value as t.Expression);
+        }
       }
       return undefined;
     }
     if (obj.type === "ArrayExpression" && typeof key === "number") {
-      const el = obj.elements[key];
-      if (el && el.type !== "SpreadElement") return resolveExpr(el, ctx, depth + 1) ?? el;
+      const el = flattenElements(obj, ctx, depth)[key];
+      if (el) return resolveExpr(el, ctx, depth + 1) ?? el;
       return undefined;
     }
     if (obj.type === "StringLiteral" && key === "length") return obj.value.length;
-    if (obj.type === "ArrayExpression" && key === "length") return obj.elements.length;
+    if (obj.type === "ArrayExpression" && key === "length") return flattenElements(obj, ctx, depth).length;
     return undefined;
   }
 
+  if (e.type === "CallExpression") {
+    const arr = arrayMethodResult(e, ctx, depth);
+    if (arr) return arr;
+    const obj = objectFromEntriesResult(e, ctx, depth);
+    if (obj) return obj;
+    const mapped = mapCallResult(e, ctx, depth);
+    if (mapped) return mapped;
+    const called = helperCallResult(e, ctx, depth);
+    if (called) return called;
+  }
+
+  // `{ ...base, tone: "dark" }` — merge so property lookups see everything.
+  if (e.type === "ObjectExpression" && e.properties.some((prop) => prop.type === "SpreadElement")) {
+    return { type: "ObjectExpression", properties: objectProperties(e, ctx, depth) } as t.ObjectExpression;
+  }
+
   return e;
+}
+
+function propertyName(prop: t.ObjectProperty): string | undefined {
+  if (prop.key.type === "Identifier") return prop.key.name;
+  if (prop.key.type === "StringLiteral") return prop.key.value;
+  if (prop.key.type === "NumericLiteral") return String(prop.key.value);
+  return undefined;
+}
+
+/** An object's own properties with `...spread` sources merged in; later wins. */
+function objectProperties(obj: t.ObjectExpression, ctx: Ctx, depth: number): t.ObjectProperty[] {
+  const out = new Map<string, t.ObjectProperty>();
+  for (const prop of obj.properties) {
+    if (prop.type === "SpreadElement") {
+      if (depth > 8) continue;
+      const res = resolveExpr(prop.argument, ctx, depth + 1);
+      const inner = res && typeof res !== "number" ? unwrap(res) : undefined;
+      if (inner?.type === "ObjectExpression") {
+        for (const inherited of objectProperties(inner, ctx, depth + 1)) {
+          const name = propertyName(inherited);
+          if (name !== undefined) out.set(name, inherited);
+        }
+      }
+      continue;
+    }
+    if (prop.type !== "ObjectProperty") continue;
+    const name = propertyName(prop);
+    if (name !== undefined) out.set(name, prop);
+  }
+  return [...out.values()];
+}
+
+/**
+ * Resolve an expression into a SELF-CONTAINED literal tree. A value produced
+ * inside a callback or a helper call outlives the scope that gave its
+ * parameters meaning, so nested `p.name` references have to be substituted now
+ * rather than left to resolve later against a scope that is already gone.
+ */
+function materialize(expr: t.Expression, ctx: Ctx, depth: number): t.Expression | undefined {
+  if (depth > 10) return undefined;
+  const res = resolveExpr(expr, ctx, depth);
+  if (res === undefined) return undefined;
+  if (typeof res === "number") return { type: "NumericLiteral", value: res } as t.NumericLiteral;
+  const e = unwrap(res);
+
+  if (e.type === "ObjectExpression") {
+    const properties = objectProperties(e, ctx, depth).map((prop) => ({
+      ...prop,
+      value: materialize(prop.value as t.Expression, ctx, depth + 1) ?? prop.value,
+    }));
+    return { type: "ObjectExpression", properties } as t.ObjectExpression;
+  }
+  if (e.type === "ArrayExpression") {
+    const elements = flattenElements(e, ctx, depth).map((el) =>
+      el ? materialize(el, ctx, depth + 1) ?? el : null,
+    );
+    return { type: "ArrayExpression", elements } as t.ArrayExpression;
+  }
+  return e;
+}
+
+const MAX_MAPPED_ITEMS = 300;
+
+/**
+ * `RAW_CHAPTERS.map((c) => withSections(c))` — content arrays are routinely
+ * derived rather than written out. Materialize the result, or every page
+ * reading it renders empty.
+ */
+function mapCallResult(e: t.CallExpression, ctx: Ctx, depth: number): t.ArrayExpression | undefined {
+  if (depth > 8 || !isMapCall(e)) return undefined;
+  const fn = e.arguments[0];
+  if (!fn || (fn.type !== "ArrowFunctionExpression" && fn.type !== "FunctionExpression")) return undefined;
+  const body = fn.body.type === "BlockStatement"
+    ? fn.body.body.find((st): st is t.ReturnStatement => st.type === "ReturnStatement")?.argument
+    : fn.body;
+  if (!body) return undefined;
+  const srcRes = resolveExpr(e.callee.object as t.Expression, ctx, depth + 1);
+  const src = srcRes && typeof srcRes !== "number" ? unwrap(srcRes) : undefined;
+  if (src?.type !== "ArrayExpression") return undefined;
+
+  const items = flattenElements(src, ctx, depth);
+  if (items.length > MAX_MAPPED_ITEMS) return undefined;
+  const elements: Array<t.Expression | null> = [];
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (!item) {
+      elements.push(null);
+      continue;
+    }
+    const scope: Scope = new Map();
+    bindPattern(fn.params[0], item, propertyLookup(item, ctx), scope, ctx, () => entriesOf(item, ctx));
+    if (fn.params[1]?.type === "Identifier") scope.set(fn.params[1].name, i);
+    ctx.scopes.push(scope);
+    const value = materialize(body, ctx, depth + 1);
+    ctx.scopes.pop();
+    elements.push(value ?? null);
+  }
+  return { type: "ArrayExpression", elements } as t.ArrayExpression;
+}
+
+/** A data helper the content layer calls: `withSections(c)`, `photoFor(name)`. */
+function helperCallResult(e: t.CallExpression, ctx: Ctx, depth: number): t.Expression | undefined {
+  if (depth > 8 || e.callee.type !== "Identifier") return undefined;
+  const name = e.callee.name;
+  const fn = ctx.functions.get(name);
+  if (!fn || ctx.callStack.includes(name) || ctx.callStack.length > 4) return undefined;
+  const body = componentReturnExpr(fn);
+  if (!body) return undefined;
+
+  const scope: Scope = new Map();
+  for (let i = 0; i < fn.params.length; i++) {
+    const arg = e.arguments[i];
+    if (!arg || arg.type === "SpreadElement" || arg.type === "ArgumentPlaceholder") continue;
+    const value = resolveExpr(arg, ctx, depth + 1) ?? arg;
+    const lookup = typeof value === "number" ? () => undefined : propertyLookup(value, ctx);
+    bindPattern(fn.params[i], value, lookup, scope, ctx, () => entriesOf(value, ctx));
+  }
+  ctx.scopes.push(scope);
+  ctx.callStack.push(name);
+  const result = materialize(body, ctx, depth + 1);
+  ctx.callStack.pop();
+  ctx.scopes.pop();
+  return result;
+}
+
+/**
+ * Route/id lookup tables are derived rather than written out:
+ *   const CHAPTERS_BY_ROUTE = Object.fromEntries(CHAPTERS.map((c) => [c.route, c]))
+ * Rebuild the object literal so `CHAPTERS_BY_ROUTE["/campus"]` resolves to a
+ * chapter — otherwise the page reading it renders completely empty.
+ */
+function objectFromEntriesResult(e: t.CallExpression, ctx: Ctx, depth: number): t.ObjectExpression | undefined {
+  if (depth > 8) return undefined;
+  const callee = e.callee;
+  if (callee.type !== "MemberExpression" || callee.computed) return undefined;
+  if (callee.object.type !== "Identifier" || callee.object.name !== "Object") return undefined;
+  if (callee.property.type !== "Identifier" || callee.property.name !== "fromEntries") return undefined;
+  const arg = e.arguments[0];
+  if (!arg || arg.type === "SpreadElement" || arg.type === "ArgumentPlaceholder") return undefined;
+
+  const pairs = entryPairs(arg, ctx, depth);
+  if (!pairs?.length) return undefined;
+  const properties = pairs.map(([key, value]) => ({
+    type: "ObjectProperty",
+    key: { type: "StringLiteral", value: key },
+    value,
+    computed: false,
+    shorthand: false,
+  })) as t.ObjectProperty[];
+  return { type: "ObjectExpression", properties } as t.ObjectExpression;
+}
+
+/** `[[k, v], ...]` written out, or produced by `ARR.map((x) => [k, v])`. */
+function entryPairs(expr: t.Expression, ctx: Ctx, depth: number): Array<[string, t.Expression]> | undefined {
+  const e = unwrap(expr);
+  const out: Array<[string, t.Expression]> = [];
+
+  const readPair = (pair: t.Node): void => {
+    const p = unwrap(pair as t.Expression);
+    if (p.type !== "ArrayExpression" || p.elements.length < 2) return;
+    const [rawKey, rawValue] = p.elements;
+    if (!rawKey || rawKey.type === "SpreadElement" || !rawValue || rawValue.type === "SpreadElement") return;
+    const key = staticValue(rawKey, ctx, depth + 1);
+    const value = resolveExpr(rawValue, ctx, depth + 1);
+    if (typeof key !== "string" && typeof key !== "number") return;
+    if (value === undefined || typeof value === "number") return;
+    out.push([String(key), value]);
+  };
+
+  if (isMapCall(e)) {
+    const srcRes = resolveExpr(e.callee.object as t.Expression, ctx, depth + 1);
+    const src = srcRes && typeof srcRes !== "number" ? unwrap(srcRes) : undefined;
+    const fn = e.arguments[0];
+    if (src?.type !== "ArrayExpression") return undefined;
+    if (!fn || (fn.type !== "ArrowFunctionExpression" && fn.type !== "FunctionExpression")) return undefined;
+    const body = fn.body.type === "BlockStatement"
+      ? fn.body.body.find((st): st is t.ReturnStatement => st.type === "ReturnStatement")?.argument
+      : fn.body;
+    if (!body) return undefined;
+    for (const item of flattenElements(src, ctx, depth)) {
+      if (!item) continue;
+      const scope: Scope = new Map();
+      bindPattern(fn.params[0], item, propertyLookup(item, ctx), scope, ctx);
+      ctx.scopes.push(scope);
+      readPair(body);
+      ctx.scopes.pop();
+    }
+    return out;
+  }
+
+  const resolved = resolveExpr(e, ctx, depth + 1);
+  const arr = resolved && typeof resolved !== "number" ? unwrap(resolved) : undefined;
+  if (arr?.type !== "ArrayExpression") return undefined;
+  for (const item of flattenElements(arr, ctx, depth)) if (item) readPair(item);
+  return out;
+}
+
+function isMapCall(e: t.Expression): e is t.CallExpression & { callee: t.MemberExpression } {
+  return e.type === "CallExpression" && e.callee.type === "MemberExpression" && !e.callee.computed &&
+    e.callee.property.type === "Identifier" && e.callee.property.name === "map";
+}
+
+/**
+ * Array literals in page data are routinely assembled from other arrays —
+ * `[{ v: pct, l: "of faculty" }, ...stats]`. Expand the spreads so a `.map()`
+ * over the result renders every row, not just the ones written inline.
+ */
+function flattenElements(arr: t.ArrayExpression, ctx: Ctx, depth = 0): Array<t.Expression | null> {
+  const out: Array<t.Expression | null> = [];
+  for (const el of arr.elements) {
+    if (!el) {
+      out.push(null);
+    } else if (el.type !== "SpreadElement") {
+      out.push(el);
+    } else if (depth < 4) {
+      const res = resolveExpr(el.argument, ctx);
+      const inner = res && typeof res !== "number" ? unwrap(res) : undefined;
+      if (inner?.type === "ArrayExpression") out.push(...flattenElements(inner, ctx, depth + 1));
+    }
+  }
+  return out;
+}
+
+/**
+ * Content arrays are rarely used raw: `EPISODES.slice(0, 3)`, `FACULTY.filter(...)`,
+ * `[...LOGOS].reverse()`. Resolve those back to an array literal so the `.map()`
+ * that follows can still be expanded — the alternative is dropping the whole
+ * list. Predicates and comparators can't run statically, so `filter` and `sort`
+ * keep every element; a preview showing all the rows beats one showing none.
+ */
+function arrayMethodResult(e: t.CallExpression, ctx: Ctx, depth: number): t.ArrayExpression | undefined {
+  if (e.callee.type !== "MemberExpression" || e.callee.computed) return undefined;
+  if (e.callee.property.type !== "Identifier") return undefined;
+  const method = e.callee.property.name;
+  if (!["slice", "filter", "sort", "toSorted", "reverse", "toReversed", "concat", "flat"].includes(method)) {
+    return undefined;
+  }
+  const objRes = resolveExpr(e.callee.object as t.Expression, ctx, depth + 1);
+  if (!objRes || typeof objRes === "number") return undefined;
+  const obj = unwrap(objRes);
+  if (obj.type !== "ArrayExpression") return undefined;
+
+  const elements: Array<t.Expression | t.SpreadElement | null> = flattenElements(obj, ctx, depth);
+  if (method === "reverse" || method === "toReversed") elements.reverse();
+  if (method === "concat") {
+    for (const arg of e.arguments) {
+      if (arg.type === "SpreadElement") continue;
+      const res = resolveExpr(arg as t.Expression, ctx, depth + 1);
+      const other = res && typeof res !== "number" ? unwrap(res) : undefined;
+      if (other?.type === "ArrayExpression") elements.push(...other.elements);
+      else elements.push(arg as t.Expression);
+    }
+  }
+  if (method === "slice") {
+    const at = (i: number) => {
+      const a = e.arguments[i];
+      if (!a || a.type === "SpreadElement") return undefined;
+      const v = staticValue(a as t.Expression, ctx, depth + 1);
+      return typeof v === "number" ? v : undefined;
+    };
+    const start = at(0);
+    const end = at(1);
+    if (start === undefined && e.arguments.length > 0) return undefined;
+    return { type: "ArrayExpression", elements: elements.slice(start ?? 0, end) } as t.ArrayExpression;
+  }
+  return { type: "ArrayExpression", elements } as t.ArrayExpression;
 }
 
 /** Literal JS value of a static expression (strings, numbers, booleans, null). */
@@ -297,8 +612,74 @@ function staticValue(expr: t.Expression, ctx: Ctx, depth = 0): string | number |
         default: return undefined;
       }
     }
+    case "ConditionalExpression": {
+      const test = staticValue(e.test as t.Expression, ctx, depth + 1);
+      if (test === undefined) return undefined;
+      return staticValue(test ? e.consequent : e.alternate, ctx, depth + 1);
+    }
+    case "CallExpression": return staticCallValue(e, ctx, depth);
     default: return undefined;
   }
+}
+
+/**
+ * Text assembled with the handful of builtins content code actually uses:
+ * `String(i + 1).padStart(2, "0")` for chapter counters, `.toUpperCase()` for
+ * eyebrows, `.slice()` for excerpts. Anything else stays unresolved.
+ */
+function staticCallValue(e: t.CallExpression, ctx: Ctx, depth: number): string | number | undefined {
+  if (depth > 10) return undefined;
+  const argAt = (i: number) => {
+    const a = e.arguments[i];
+    if (!a || a.type === "SpreadElement" || a.type === "ArgumentPlaceholder") return undefined;
+    return staticValue(a, ctx, depth + 1);
+  };
+
+  if (e.callee.type === "Identifier") {
+    const value = argAt(0);
+    if (value === undefined || value === null) return undefined;
+    if (e.callee.name === "String") return String(value);
+    if (e.callee.name === "Number") return Number(value);
+    return undefined;
+  }
+
+  if (e.callee.type !== "MemberExpression" || e.callee.computed) return undefined;
+  if (e.callee.property.type !== "Identifier") return undefined;
+  const method = e.callee.property.name;
+  const target = staticValue(e.callee.object as t.Expression, ctx, depth + 1);
+
+  if (typeof target === "string") {
+    const n = argAt(0);
+    switch (method) {
+      case "toUpperCase": return target.toUpperCase();
+      case "toLowerCase": return target.toLowerCase();
+      case "trim": return target.trim();
+      case "padStart":
+      case "padEnd": {
+        if (typeof n !== "number") return undefined;
+        const pad = argAt(1);
+        const fill = typeof pad === "string" ? pad : " ";
+        return method === "padStart" ? target.padStart(n, fill) : target.padEnd(n, fill);
+      }
+      case "slice": {
+        const end = argAt(1);
+        return target.slice(
+          typeof n === "number" ? n : 0,
+          typeof end === "number" ? end : undefined,
+        );
+      }
+      default: return undefined;
+    }
+  }
+
+  if (typeof target === "number") {
+    const digits = argAt(0);
+    if (method === "toString") return String(target);
+    if (method === "toFixed" && typeof digits === "number") return target.toFixed(digits);
+    return undefined;
+  }
+
+  return undefined;
 }
 
 /** Best-effort static string for className-like values. */
@@ -334,6 +715,9 @@ function staticClassName(expr: t.Expression, ctx: Ctx): { value: string; partial
           if (arg.type === "SpreadElement" || arg.type === "ArgumentPlaceholder") { partial = true; continue; }
           push(arg as t.Expression);
         }
+      } else if (inner.type === "BinaryExpression" && inner.operator === "+") {
+        push(inner.left as t.Expression);
+        push(inner.right);
       } else if (inner.type === "TemplateLiteral") {
         // handled by staticValue when fully static; partially static:
         let out = "";
@@ -359,7 +743,12 @@ function staticClassName(expr: t.Expression, ctx: Ctx): { value: string; partial
 // ---------------------------------------------------------------------------
 
 function makeKey(ctx: Ctx, tag: string, content: string) {
-  const base = `${ctx.section}-${tag}-${hash4(content)}`;
+  // Positional slugs ("section-3") would put a page's *position* into every
+  // field key below it, so inserting one section upstream renames every key
+  // after it and orphans the admin's edits on the next sync. Named sections
+  // are stable and stay in the key; positional ones are dropped from it.
+  const slug = /^section-\d+$/.test(ctx.section) ? "page" : ctx.section;
+  const base = `${slug}-${tag}-${hash4(content)}`;
   let key = base;
   let i = 2;
   while (ctx.usedKeys.has(key)) key = `${base}-${i++}`;
@@ -426,6 +815,42 @@ function convertStyle(obj: t.ObjectExpression, ctx: Ctx, tag: string): Record<st
 
 type ConvertedProps = { props: Record<string, PropValue>; srcFieldKey?: string };
 
+/**
+ * `<img {...rest} />` — splice a spread's properties in as if they had been
+ * written out. Wrapper components forward their props this way constantly, and
+ * dropping the spread strips the element's src, className and everything else,
+ * leaving an invisible or unstyled node on the page.
+ *
+ * Order is preserved so a later attribute still overrides an earlier one, the
+ * same way React resolves duplicate props.
+ */
+function expandSpreadAttributes(
+  attrs: Array<t.JSXAttribute | t.JSXSpreadAttribute>,
+  ctx: Ctx,
+): t.JSXAttribute[] {
+  const out: t.JSXAttribute[] = [];
+  for (const attr of attrs) {
+    if (attr.type === "JSXAttribute") {
+      out.push(attr);
+      continue;
+    }
+    const pairs = entriesOf(attr.argument, ctx);
+    if (pairs.length === 0) {
+      dropped(ctx, attr);
+      continue;
+    }
+    for (const [name, value] of pairs) {
+      if (!/^[A-Za-z_$][\w$:-]*$/.test(name)) continue;
+      out.push({
+        type: "JSXAttribute",
+        name: { type: "JSXIdentifier", name },
+        value: { type: "JSXExpressionContainer", expression: literalFor(value) },
+      } as t.JSXAttribute);
+    }
+  }
+  return out;
+}
+
 async function convertAttributes(
   attrs: Array<t.JSXAttribute | t.JSXSpreadAttribute>,
   tag: string,
@@ -436,8 +861,7 @@ async function convertAttributes(
   let srcFieldKey: string | undefined;
   let hasSrcField = false;
 
-  for (const attr of attrs) {
-    if (attr.type === "JSXSpreadAttribute") { dropped(ctx, attr); continue; }
+  for (const attr of expandSpreadAttributes(attrs, ctx)) {
     const rawName =
       attr.name.type === "JSXNamespacedName"
         ? `${attr.name.namespace.name}:${attr.name.name.name}`
@@ -630,6 +1054,25 @@ async function convertExpression(
 
   if (e.type === "JSXElement" || e.type === "JSXFragment") return convertNode(e, ctx, parentTag, inSvg);
 
+  // A prop holding markup: title={<>Faculty <Accent>who ship</Accent></>},
+  // icon={<Star />}. The identifier resolves to JSX rather than to a value.
+  if (e.type === "Identifier" || e.type === "MemberExpression") {
+    const res = resolveExpr(e, ctx);
+    if (res !== undefined && typeof res !== "number") {
+      const r = unwrap(res);
+      if (r.type === "JSXElement" || r.type === "JSXFragment") return convertNode(r, ctx, parentTag, inSvg);
+    }
+  }
+
+  // {children} / {props.children} inside a component being inlined: emit the
+  // JSX the caller passed in. Converted in the caller's scope, so its own
+  // consts and map variables resolved before we got here.
+  if (ctx.childrenStack.length > 0 && isChildrenRef(e)) {
+    const frame = ctx.childrenStack[ctx.childrenStack.length - 1];
+    frame.used = true;
+    return frame.nodes;
+  }
+
   // Literal-ish → text field
   const v = staticValue(e, ctx);
   if (typeof v === "string" || typeof v === "number") {
@@ -675,7 +1118,6 @@ async function convertExpression(
     const fn = e.arguments[0];
     if (arr?.type === "ArrayExpression" && fn &&
         (fn.type === "ArrowFunctionExpression" || fn.type === "FunctionExpression")) {
-      const itemParam = fn.params[0]?.type === "Identifier" ? fn.params[0].name : undefined;
       const indexParam = fn.params[1]?.type === "Identifier" ? fn.params[1].name : undefined;
       let body: t.Expression | undefined;
       if (fn.body.type !== "BlockStatement") body = fn.body;
@@ -685,11 +1127,14 @@ async function convertExpression(
       }
       if (body) {
         const results: TreeNode[] = [];
-        for (let i = 0; i < arr.elements.length; i++) {
-          const el = arr.elements[i];
-          if (!el || el.type === "SpreadElement") continue;
+        const elements = flattenElements(arr, ctx);
+        for (let i = 0; i < elements.length; i++) {
+          const el = elements[i];
+          if (!el) continue;
           const scope: Scope = new Map();
-          if (itemParam) scope.set(itemParam, el as t.Expression);
+          // `(item)` and `({ id, icon: Icon })` are both common in Lovable code.
+          const item = el;
+          bindPattern(fn.params[0], item, propertyLookup(item, ctx), scope, ctx, () => entriesOf(item, ctx));
           if (indexParam) scope.set(indexParam, i);
           ctx.scopes.push(scope);
           results.push(...(await convertExpression(body, ctx, parentTag, inSvg)));
@@ -788,6 +1233,226 @@ async function lucideFromAttrs(
   }];
 }
 
+/** The key a destructuring property reads, e.g. `icon: Icon` → "icon". */
+function patternKey(prop: t.ObjectProperty): string | undefined {
+  if (prop.key.type === "Identifier") return prop.key.name;
+  if (prop.key.type === "StringLiteral") return prop.key.value;
+  return undefined;
+}
+
+/**
+ * Bind a function parameter to a value, following destructuring:
+ *   (item)                    → item = value
+ *   ({ id, icon: Icon })      → id = value.id, Icon = value.icon
+ *   ({ label = "More" })      → label = value.label, or its default
+ * `lookup` reads a property off the value; it resolves in the *outer* scope,
+ * before this binding is pushed.
+ */
+function bindPattern(
+  param: t.Node | undefined,
+  value: t.Expression | number | undefined,
+  lookup: (key: string) => t.Expression | number | undefined,
+  scope: Scope,
+  ctx: Ctx,
+  entries?: () => Array<[string, t.Expression | number]>,
+): void {
+  if (!param) return;
+  if (param.type === "Identifier") {
+    if (value !== undefined) scope.set(param.name, value);
+    return;
+  }
+  if (param.type !== "ObjectPattern") return;
+  const taken = new Set<string>();
+  for (const prop of param.properties) {
+    if (prop.type !== "ObjectProperty") continue;
+    const key = patternKey(prop);
+    if (!key) continue;
+    taken.add(key);
+    let local: t.Node = prop.value;
+    let fallback: t.Expression | undefined;
+    if (local.type === "AssignmentPattern") {
+      fallback = local.right as t.Expression;
+      local = local.left;
+    }
+    if (local.type !== "Identifier") continue;
+    const bound = lookup(key) ?? (fallback ? resolveExpr(fallback, ctx) ?? fallback : undefined);
+    if (bound !== undefined) scope.set(local.name, bound);
+  }
+
+  // `const { onPointerDown, ...rest } = props` — rest keeps everything the
+  // pattern did not name, and components forward it onto a real element.
+  const rest = param.properties.find((prop) => prop.type === "RestElement");
+  if (rest?.type === "RestElement" && rest.argument.type === "Identifier" && entries) {
+    scope.set(rest.argument.name, objectFrom(entries().filter(([key]) => !taken.has(key))));
+  }
+}
+
+/** Build an object literal from resolved key/value pairs. */
+function objectFrom(pairs: Array<[string, t.Expression | number]>): t.ObjectExpression {
+  const properties = pairs.map(([name, value]) => ({
+    type: "ObjectProperty",
+    key: { type: "Identifier", name },
+    value: literalFor(value),
+    computed: false,
+    shorthand: false,
+  })) as t.ObjectProperty[];
+  return { type: "ObjectExpression", properties } as t.ObjectExpression;
+}
+
+/** Every readable key/value pair of an expression that resolves to an object. */
+function entriesOf(value: t.Expression | number | undefined, ctx: Ctx): Array<[string, t.Expression | number]> {
+  if (value === undefined || typeof value === "number") return [];
+  const res = resolveExpr(value, ctx);
+  const obj = res && typeof res !== "number" ? unwrap(res) : undefined;
+  if (obj?.type !== "ObjectExpression") return [];
+  const out: Array<[string, t.Expression | number]> = [];
+  for (const prop of objectProperties(obj, ctx, 0)) {
+    const name = propertyName(prop);
+    if (name !== undefined) out.push([name, prop.value as t.Expression]);
+  }
+  return out;
+}
+
+/** Reads `key` off an expression the way `value.key` would. */
+function propertyLookup(value: t.Expression, ctx: Ctx) {
+  return (key: string): t.Expression | number | undefined => {
+    const member = {
+      type: "MemberExpression",
+      object: value,
+      property: { type: "Identifier", name: key },
+      computed: false,
+    } as t.MemberExpression;
+    return resolveExpr(member, ctx);
+  };
+}
+
+function literalFor(value: t.Expression | number): t.Expression {
+  return typeof value === "number" ? ({ type: "NumericLiteral", value } as t.NumericLiteral) : value;
+}
+
+/**
+ * Bind an inlined component's parameters to the JSX attributes at the call
+ * site, so its body resolves `items`, `className`, `props.title` the way React
+ * would. Without this, every `{items.map(...)}` inside a reusable section
+ * component drops out and the section renders empty.
+ *
+ * Attribute values are resolved in the CALLER's scope first, since the binding
+ * we are about to push may shadow the very names they refer to.
+ */
+function bindComponentProps(fn: ComponentFn, el: t.JSXElement, ctx: Ctx): Scope {
+  const scope: Scope = new Map();
+  const param = fn.params[0];
+  if (!param) return scope;
+
+  const attrs = new Map<string, t.Expression | number>();
+  for (const attr of expandSpreadAttributes(el.openingElement.attributes, ctx)) {
+    if (attr.name.type !== "JSXIdentifier") continue;
+    let expr: t.Expression | undefined;
+    if (!attr.value) expr = { type: "BooleanLiteral", value: true } as t.BooleanLiteral;
+    else if (attr.value.type === "StringLiteral") expr = attr.value;
+    else if (attr.value.type === "JSXExpressionContainer" && attr.value.expression.type !== "JSXEmptyExpression") {
+      expr = attr.value.expression;
+    }
+    if (!expr) continue;
+    let value = resolveExpr(expr, ctx) ?? expr;
+    // Flatten spreads here, while the caller's scope is still the active one.
+    // `stats={[featured, ...stats]}` on a component whose own prop is also
+    // named `stats` would otherwise resolve the spread against the binding we
+    // are building and lose every inherited row.
+    if (typeof value !== "number") {
+      const arr = unwrap(value);
+      if (arr.type === "ArrayExpression") {
+        value = { type: "ArrayExpression", elements: flattenElements(arr, ctx) } as t.ArrayExpression;
+      }
+    }
+    attrs.set(attr.name.name, value);
+  }
+
+  if (param.type === "Identifier") {
+    // function Card(props) — rebuild the props object so props.x resolves.
+    const properties = [...attrs].map(([name, value]) => ({
+      type: "ObjectProperty",
+      key: { type: "Identifier", name },
+      value: literalFor(value),
+      computed: false,
+      shorthand: false,
+    })) as t.ObjectProperty[];
+    scope.set(param.name, { type: "ObjectExpression", properties } as t.ObjectExpression);
+    return scope;
+  }
+
+  bindPattern(param, undefined, (key) => attrs.get(key), scope, ctx, () => [...attrs]);
+  return scope;
+}
+
+/**
+ * Bind a component body's own destructuring against the props already in scope:
+ *   const { onPointerDown, ...rest } = props
+ * Without this, `rest` is unresolvable and the `<img {...rest} />` it feeds
+ * renders with no src and no classes at all. Scoped to this inlining rather
+ * than the global const map, so two components using the same local name
+ * cannot shadow each other.
+ */
+function bindBodyDestructuring(fn: ComponentFn, scope: Scope, ctx: Ctx): void {
+  if (fn.body.type !== "BlockStatement") return;
+  for (const stmt of fn.body.body) {
+    if (stmt.type !== "VariableDeclaration") continue;
+    for (const decl of stmt.declarations) {
+      if (decl.id.type !== "ObjectPattern" || !decl.init) continue;
+      const source = decl.init;
+      const resolved = resolveExpr(source, ctx);
+      if (resolved === undefined) continue;
+      bindPattern(
+        decl.id,
+        resolved,
+        typeof resolved === "number" ? () => undefined : propertyLookup(resolved, ctx),
+        scope,
+        ctx,
+        () => entriesOf(resolved, ctx),
+      );
+    }
+  }
+}
+
+/** `children`, `props.children`, or React.Children.toArray/map/only(children). */
+function isChildrenRef(e: t.Expression): boolean {
+  if (e.type === "Identifier") return e.name === "children";
+  if (e.type === "MemberExpression") {
+    return !e.computed && e.object.type === "Identifier" && e.object.name === "props" &&
+      e.property.type === "Identifier" && e.property.name === "children";
+  }
+  if (e.type === "CallExpression" && e.callee.type === "MemberExpression") {
+    const prop = e.callee.property;
+    const method = prop.type === "Identifier" ? prop.name : "";
+    if (!["toArray", "map", "only", "count"].includes(method)) return false;
+    const obj = e.callee.object;
+    const onChildren =
+      (obj.type === "Identifier" && obj.name === "Children") ||
+      (obj.type === "MemberExpression" && !obj.computed &&
+        obj.property.type === "Identifier" && obj.property.name === "Children");
+    if (!onChildren) return false;
+    const arg = e.arguments[0];
+    return !!arg && arg.type !== "SpreadElement" && isChildrenRef(arg as t.Expression);
+  }
+  return false;
+}
+
+/**
+ * A wrapper component whose children only reach the DOM through runtime code —
+ * a measured sticky-panel layout, a portal, `Children.toArray(children).map()` —
+ * renders nothing once that code is stripped, silently swallowing whole page
+ * sections. Re-attach the caller's children to the wrapper's own root instead.
+ */
+function adoptChildren(nodes: TreeNode[], children: TreeNode[], ctx: Ctx, name: string): TreeNode[] {
+  note(ctx, `<${name}> lays its children out at runtime — they were placed inside it directly instead.`);
+  const roots = nodes.filter((n): n is Extract<TreeNode, { t: "e" }> => n.t === "e");
+  if (roots.length === 1) {
+    roots[0].children = [...roots[0].children, ...children];
+    return nodes;
+  }
+  return [...nodes, ...children];
+}
+
 async function convertElement(el: t.JSXElement, ctx: Ctx, inSvg: boolean): Promise<TreeNode[]> {
   const nameStr = elementNameToString(el.openingElement.name);
   const name = el.openingElement.name;
@@ -796,9 +1461,25 @@ async function convertElement(el: t.JSXElement, ctx: Ctx, inSvg: boolean): Promi
   if (name.type === "JSXMemberExpression") {
     const icon = resolveMemberIcon(name, ctx);
     if (icon) return lucideFromAttrs(icon, el, ctx);
+
+    // <motion.section className="..."> renders the plain tag it wraps. Its
+    // animation props are dropped, which lands the element on its *finished*
+    // state — the right choice when nothing will ever animate it into view.
+    const motionTag = motionElementTag(name);
+    if (motionTag) {
+      const svgNow = inSvg || motionTag === "svg";
+      const { props } = await convertAttributes(el.openingElement.attributes, motionTag, ctx, svgNow);
+      for (const key of MOTION_PROPS) delete props[key];
+      const label = `${nameStr} (rendered as <${motionTag}>)`;
+      if (!ctx.report.unknownComponents.includes(label)) ctx.report.unknownComponents.push(label);
+      const children = VOID_TAGS.has(motionTag) ? [] : await convertChildren(el.children, ctx, motionTag, svgNow);
+      return [{ t: "e", tag: motionTag, props, children, from: nameStr }];
+    }
+
     if (!ctx.report.unknownComponents.includes(nameStr)) ctx.report.unknownComponents.push(nameStr);
+    const { props } = await convertAttributes(el.openingElement.attributes, "div", ctx, inSvg);
     const children = await convertChildren(el.children, ctx, "div", inSvg);
-    return [{ t: "e", tag: "div", props: {}, children, from: nameStr }];
+    return [{ t: "e", tag: "div", props, children, from: nameStr }];
   }
 
   if (name.type === "JSXNamespacedName") return [];
@@ -832,7 +1513,10 @@ async function convertElement(el: t.JSXElement, ctx: Ctx, inSvg: boolean): Promi
     }
   }
 
-  if (nameStr === "Fragment") return convertChildren(el.children, ctx, "div", inSvg);
+  // Pure controllers with no DOM output of their own.
+  if (nameStr === "Fragment" || nameStr === "AnimatePresence" || nameStr === "LazyMotion") {
+    return convertChildren(el.children, ctx, "div", inSvg);
+  }
 
   // Component defined in the pasted source itself (Lovable splits pages into
   // section components — Header, Hero, ... — pasted together with the page):
@@ -841,9 +1525,21 @@ async function convertElement(el: t.JSXElement, ctx: Ctx, inSvg: boolean): Promi
   if (local && !ctx.inlineStack.includes(nameStr) && ctx.inlineStack.length < 20) {
     const body = componentReturnExpr(local);
     if (body) {
+      const frame: ChildrenFrame = {
+        nodes: await convertChildren(el.children, ctx, "div", inSvg),
+        used: false,
+      };
+      const props = bindComponentProps(local, el, ctx);
       ctx.inlineStack.push(nameStr);
+      ctx.childrenStack.push(frame);
+      ctx.scopes.push(props);
+      bindBodyDestructuring(local, props, ctx);
       const nodes = await convertExpression(body, ctx, "div", inSvg);
+      ctx.scopes.pop();
+      ctx.childrenStack.pop();
       ctx.inlineStack.pop();
+      const hasContent = frame.nodes.some((n) => n.t !== "x");
+      if (!frame.used && hasContent) return adoptChildren(nodes, frame.nodes, ctx, nameStr);
       return nodes;
     }
   }
@@ -935,6 +1631,26 @@ function asComponentFn(n: t.Node | undefined): ComponentFn | undefined {
     ? n : undefined;
 }
 
+/**
+ * TanStack Start route files never export their page component: they hand it
+ * to the route factory, `createFileRoute("/about")({ component: AboutPage })`.
+ * Returns the `component` value (an identifier or an inline function).
+ */
+function routeFactoryComponent(node: t.CallExpression): t.Node | undefined {
+  if (node.callee.type !== "CallExpression") return undefined;
+  const factory = node.callee.callee;
+  if (factory.type !== "Identifier" || !/^create(Lazy)?FileRoute$/.test(factory.name)) return undefined;
+  const options = node.arguments[0];
+  if (options?.type !== "ObjectExpression") return undefined;
+  for (const prop of options.properties) {
+    if (prop.type !== "ObjectProperty") continue;
+    const key = prop.key;
+    const name = key.type === "Identifier" ? key.name : key.type === "StringLiteral" ? key.value : "";
+    if (name === "component") return prop.value;
+  }
+  return undefined;
+}
+
 /** The expression a component function returns (its JSX, usually). */
 function componentReturnExpr(fn: ComponentFn): t.Expression | undefined {
   if (fn.body.type !== "BlockStatement") return fn.body;
@@ -969,6 +1685,9 @@ export async function extractPage(
   const ctx: Ctx = {
     localComponents: new Map(),
     inlineStack: [],
+    functions: new Map(),
+    callStack: [],
+    childrenStack: [],
     source,
     fields: [],
     usedKeys: new Set(),
@@ -987,7 +1706,11 @@ export async function extractPage(
     sort: { n: 0 },
   };
 
-  let defaultExport: t.Node | undefined;
+  // Both candidate entry points are tracked with their position in the
+  // source: bundles concatenate the page file LAST, so the later construct is
+  // the page and a bundled component's `export default` must not outrank it.
+  let entryPoint: t.Node | undefined;
+  let entryPointAt = -1;
   const functions = new Map<string, t.FunctionDeclaration>();
 
   walk(ast.program, (node) => {
@@ -1032,10 +1755,29 @@ export async function extractPage(
         if (node.id && !functions.has(node.id.name)) functions.set(node.id.name, node);
         break;
       case "ExportDefaultDeclaration":
-        defaultExport = node.declaration;
+        if ((node.start ?? 0) >= entryPointAt) {
+          entryPoint = node.declaration;
+          entryPointAt = node.start ?? 0;
+        }
         break;
+      case "CallExpression": {
+        const routeComponent = routeFactoryComponent(node);
+        if (routeComponent && (node.start ?? 0) >= entryPointAt) {
+          entryPoint = routeComponent;
+          entryPointAt = node.start ?? 0;
+        }
+        break;
+      }
     }
   });
+
+  // Every function is a candidate data helper (`withSections(c)`), not only the
+  // PascalCase ones that are components.
+  for (const [name, fn] of functions) ctx.functions.set(name, fn);
+  for (const [name, init] of ctx.consts) {
+    const fn = asComponentFn(init);
+    if (fn && !ctx.functions.has(name)) ctx.functions.set(name, fn);
+  }
 
   // Register every component defined in the pasted source (PascalCase name,
   // function returning something) so <Header /> etc. can be inlined.
@@ -1048,9 +1790,9 @@ export async function extractPage(
   }
 
   // Locate the page component
-  let component = asComponentFn(defaultExport);
-  if (!component && defaultExport?.type === "Identifier") {
-    component = functions.get(defaultExport.name) ?? asComponentFn(ctx.consts.get(defaultExport.name));
+  let component = asComponentFn(entryPoint);
+  if (!component && entryPoint?.type === "Identifier") {
+    component = functions.get(entryPoint.name) ?? asComponentFn(ctx.consts.get(entryPoint.name));
   }
   if (!component) {
     // Fallback: first top-level function component
@@ -1081,15 +1823,39 @@ export async function extractPage(
 
   let container: JsxParent = rootExpr;
   const wrappers: t.JSXElement[] = [];
+  // Prop bindings picked up while stepping through component boundaries. A page
+  // that is simply <ResponsiveCardGrid cards={CARDS} /> has all of its content
+  // in those props, so they have to stay in scope for the conversion below.
+  const descentScopes: Scope[] = [];
   for (let hops = 0; hops < 30 && container.type === "JSXElement"; hops++) {
     const cname = elementNameToString(container.openingElement.name);
     // Step transparently through a local component boundary (<HomePage/> whose
     // body holds the real sections).
     const localFn = ctx.localComponents.get(cname);
     if (localFn) {
+      // A component with its own nested children has to go through the normal
+      // inline path, which binds props AND children. Stepping into its body
+      // here would silently drop everything the caller nested inside it, so
+      // back off one level and let it be converted as an ordinary section.
+      const nested = container.children.some(
+        (c) =>
+          c.type === "JSXElement" ||
+          c.type === "JSXFragment" ||
+          (c.type === "JSXExpressionContainer" && c.expression.type !== "JSXEmptyExpression") ||
+          (c.type === "JSXText" && c.value.trim() !== ""),
+      );
+      if (nested) {
+        const parent = wrappers.pop();
+        if (parent) container = parent;
+        break;
+      }
       const inner = componentReturnExpr(localFn);
       const unwrapped = inner ? unwrap(inner) : undefined;
       if (unwrapped && (unwrapped.type === "JSXElement" || unwrapped.type === "JSXFragment")) {
+        const scope = bindComponentProps(localFn, container, ctx);
+        ctx.scopes.push(scope);
+        bindBodyDestructuring(localFn, scope, ctx);
+        descentScopes.push(scope);
         container = unwrapped;
         continue;
       }
@@ -1132,6 +1898,12 @@ export async function extractPage(
     const { props } = await convertAttributes(el.openingElement.attributes, tag, ctx, false);
     tree = [{ t: "e", tag, props, children: tree, ...(isHtml ? {} : { from: nameStr }) }];
   }
+  for (let i = 0; i < descentScopes.length; i++) ctx.scopes.pop();
+
+  revealHiddenPanels(tree, ctx);
+  for (const root of tree) {
+    if (root.t === "e" && carriesContent(root) && hiddenByUtilityClass(root)) unhideUtilityClasses(root);
+  }
 
   // Meta fields, always present, first in sort order.
   const title = ctx.firstHeading ?? "Untitled page";
@@ -1147,6 +1919,90 @@ export async function extractPage(
   );
 
   return { tree, fields: ctx.fields, report: ctx.report, title };
+}
+
+type ElementNode = Extract<TreeNode, { t: "e" }>;
+
+const POSITIONED = /(^|\s)(absolute|fixed|sticky)(\s|$)/;
+
+/**
+ * A utility class hiding an element that a runtime flag was going to turn on
+ * (`navVisible ? "opacity-100" : "opacity-0"` resolves to the closed state,
+ * since state is stripped). Positioned elements are excluded: those are
+ * crossfade layers and overlays where a sibling already occupies the space, so
+ * revealing them stacks two things on top of each other instead of helping.
+ */
+function hiddenByUtilityClass(n: ElementNode): boolean {
+  const cls = typeof n.props.className === "string" ? n.props.className : "";
+  if (!cls || POSITIONED.test(cls)) return false;
+  return /(^|\s)(opacity-0|invisible)(\s|$)/.test(cls);
+}
+
+function unhideUtilityClasses(n: ElementNode): void {
+  const cls = typeof n.props.className === "string" ? n.props.className : "";
+  const kept = cls
+    .split(/\s+/)
+    .filter((c) => c !== "opacity-0" && c !== "invisible" && c !== "pointer-events-none");
+  n.props.className = kept.join(" ");
+}
+
+/** Inline styles that hide an element outright, whatever its classes say. */
+function hiddenByStyle(n: ElementNode): boolean {
+  const style = n.props.style;
+  if (!style || typeof style !== "object" || isFieldRef(style)) return false;
+  const s = style as Record<string, StyleValue>;
+  return s.opacity === 0 || s.opacity === "0" || s.visibility === "hidden" || s.display === "none";
+}
+
+function showElement(n: ElementNode): void {
+  const style = n.props.style;
+  if (!style || typeof style !== "object" || isFieldRef(style)) return;
+  const s = { ...(style as Record<string, StyleValue>) };
+  delete s.opacity;
+  delete s.visibility;
+  delete s.display;
+  if (Object.keys(s).length === 0) delete n.props.style;
+  else n.props.style = s;
+}
+
+/** Text or media the reader would actually miss if this subtree stayed hidden. */
+function carriesContent(n: TreeNode): boolean {
+  if (n.t === "f") return true;
+  if (n.t === "x") return n.v.trim().length > 0;
+  if (n.tag === "img" || n.tag === "video" || n.tag === "svg") return true;
+  return n.children.some(carriesContent);
+}
+
+/**
+ * Scroll-driven decks ship their panels hidden inline
+ * (`style={{ opacity: 0, visibility: "hidden" }}`) and un-hide them from a
+ * scroll handler that never runs here, so the whole section renders blank.
+ *
+ * Reveal the first panel of any such group — but only when EVERY panel in it is
+ * hidden. A group with one visible panel is a deck already showing its first
+ * slide, and revealing more would stack absolutely-positioned panels on top of
+ * one another instead of fixing anything.
+ */
+function revealHiddenPanels(nodes: TreeNode[], ctx: Ctx): void {
+  for (const node of nodes) {
+    if (node.t !== "e") continue;
+    const panels = node.children.filter((c): c is ElementNode => c.t === "e" && carriesContent(c));
+    const hidden = panels.filter(hiddenByStyle);
+    if (hidden.length > 0 && hidden.length === panels.length) {
+      showElement(hidden[0]);
+      note(
+        ctx,
+        `A scroll-revealed panel group was hidden until its scroll code ran \u2014 its first panel is shown instead (${hidden.length - 1} more remain hidden).`,
+      );
+    }
+    for (const child of panels) {
+      if (hiddenByUtilityClass(child)) {
+        unhideUtilityClasses(child);
+        note(ctx, "An element was left hidden by a runtime visibility flag \u2014 it is shown, since nothing will switch it on here.");
+      }
+    }
+    revealHiddenPanels(node.children, ctx);
+  }
 }
 
 export function normalizeRoute(input: string): string {

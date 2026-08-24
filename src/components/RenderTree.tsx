@@ -12,12 +12,38 @@ const VOID_TAGS = new Set([
 
 // Tags whose rendering would execute or fetch code — never emitted even if
 // they somehow ended up in a stored tree.
-const BLOCKED_TAGS = new Set(["script", "object", "applet", "base"]);
+// Tags that execute code, pull in remote documents, or restyle/retarget the
+// whole page. A stored tree is data we render verbatim, so the guard list has
+// to cover more than just <script>.
+const BLOCKED_TAGS = new Set([
+  "script", "object", "applet", "base", "iframe", "embed", "frame", "frameset",
+  "link", "meta", "style", "noscript", "portal",
+]);
 
 const BLOCKED_PROPS = new Set(["dangerouslySetInnerHTML", "srcDoc", "ref", "key", "children"]);
 
-function safeUrl(value: string): string {
-  return /^\s*javascript:/i.test(value) ? "#" : value;
+// Allowlist rather than a denylist: `data:text/html`, `vbscript:` and
+// tab-obfuscated `java<TAB>script:` all slip past a `javascript:` test, since
+// browsers strip whitespace inside a scheme before resolving it.
+const SAFE_SCHEME = /^(https?|mailto|tel|ftp):/i;
+// Inline media is safe to *load*; `data:text/html` is only dangerous when a
+// link navigates to it, so what counts as safe depends on the attribute.
+const SAFE_MEDIA_DATA = /^data:(image|video|audio|font)\//i;
+
+function safeUrl(value: string, kind: "src" | "href" = "href"): string {
+  const trimmed = value.trim();
+  if (trimmed === "") return "";
+  // Protocol-relative URLs silently inherit the scheme and leave the origin.
+  if (trimmed.startsWith("//")) return "#";
+  // Relative, root-relative, anchor and query URLs carry no scheme at all.
+  if (/^[.#/?]/.test(trimmed)) return trimmed;
+  // The scheme is everything up to the first ":", ignoring the control
+  // characters and whitespace a browser strips before resolving it.
+  const stripped = trimmed.replace(/[\s\u0000-\u001F]/g, "");
+  if (!stripped.includes(":")) return trimmed;
+  if (SAFE_SCHEME.test(stripped)) return trimmed;
+  if (kind === "src" && (SAFE_MEDIA_DATA.test(stripped) || /^blob:/i.test(stripped))) return trimmed;
+  return "#";
 }
 
 function resolveProp(
@@ -27,22 +53,27 @@ function resolveProp(
 ): { value: unknown; fieldKey?: string } {
   if (isFieldRef(value)) {
     const resolved = values[value.$f] ?? "";
-    return { value: name === "src" || name === "href" ? safeUrl(resolved) : resolved, fieldKey: value.$f };
+    if (name === "src" || name === "poster") return { value: safeUrl(resolved, "src"), fieldKey: value.$f };
+    if (name === "href") return { value: safeUrl(resolved, "href"), fieldKey: value.$f };
+    return { value: resolved, fieldKey: value.$f };
   }
   if (name === "style" && typeof value === "object") {
     const style: CSSProperties = {};
     for (const [k, v] of Object.entries(value)) {
       if (isFieldRef(v)) {
         const url = values[v.$f] ?? "";
-        (style as Record<string, unknown>)[k] = `url("${safeUrl(url).replace(/"/g, "%22")}")`;
+        (style as Record<string, unknown>)[k] = `url("${safeUrl(url, "src").replace(/"/g, "%22")}")`;
       } else {
         (style as Record<string, unknown>)[k] = v;
       }
     }
     return { value: style };
   }
-  if ((name === "href" || name === "src" || name === "action") && typeof value === "string") {
-    return { value: safeUrl(value) };
+  if ((name === "src" || name === "poster" || name === "srcSet") && typeof value === "string") {
+    return { value: safeUrl(value, "src") };
+  }
+  if ((name === "href" || name === "action" || name === "formAction") && typeof value === "string") {
+    return { value: safeUrl(value, "href") };
   }
   return { value };
 }

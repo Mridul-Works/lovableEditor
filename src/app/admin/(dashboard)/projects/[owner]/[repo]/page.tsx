@@ -53,8 +53,8 @@ export default async function RepoDetailPage({
         <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>
       ) : pageFiles.length === 0 ? (
         <div className="rounded-xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">
-          No page files found (looked for <code>src/pages/*.tsx</code> and <code>src/App.tsx</code>).
-          This doesn&apos;t look like a Lovable project export.
+          No page files found (looked for <code>src/pages/*.tsx</code>, <code>src/routes/*.tsx</code>{" "}
+          and <code>src/App.tsx</code>). This doesn&apos;t look like a Lovable project export.
         </div>
       ) : (
         <div className="space-y-3">

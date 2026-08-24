@@ -14,7 +14,9 @@ function createClient() {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { PrismaBetterSqlite3 } = require("@prisma/adapter-better-sqlite3") as typeof import("@prisma/adapter-better-sqlite3");
   const file = url.replace(/^file:/, "");
-  const absolute = path.isAbsolute(file) ? file : path.join(process.cwd(), file);
+  // turbopackIgnore keeps this dynamic path from forcing the entire project
+  // (including public/) to be traced into the server bundle.
+  const absolute = path.isAbsolute(file) ? file : path.join(/*turbopackIgnore: true*/ process.cwd(), file);
   return new PrismaClient({ adapter: new PrismaBetterSqlite3({ url: `file:${absolute}` }) });
 }
 

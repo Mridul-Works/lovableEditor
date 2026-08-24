@@ -11,10 +11,18 @@ async function main() {
     throw new Error("Set ADMIN_EMAIL and ADMIN_PASSWORD in .env before seeding");
   }
 
+  // Mirror src/lib/db.ts: the schema is Postgres-compatible, so seeding has to
+  // work against Postgres too rather than hard-coding the SQLite adapter.
   const url = process.env.DATABASE_URL ?? "file:./prisma/dev.db";
-  const file = url.replace(/^file:/, "");
-  const absolute = path.isAbsolute(file) ? file : path.join(process.cwd(), file);
-  const db = new PrismaClient({ adapter: new PrismaBetterSqlite3({ url: `file:${absolute}` }) });
+  const db = await (async () => {
+    if (url.startsWith("postgres")) {
+      const { PrismaPg } = await import("@prisma/adapter-pg");
+      return new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) });
+    }
+    const file = url.replace(/^file:/, "");
+    const absolute = path.isAbsolute(file) ? file : path.join(process.cwd(), file);
+    return new PrismaClient({ adapter: new PrismaBetterSqlite3({ url: `file:${absolute}` }) });
+  })();
 
   const passwordHash = await bcrypt.hash(password, 10);
   const admin = await db.adminUser.upsert({

@@ -102,6 +102,17 @@ export function EditOverlay({ route }: { route: string }) {
     };
   }, []);
 
+  // Leaving with pending edits silently discards them; the overlay holds every
+  // change in memory until "Save all".
+  useEffect(() => {
+    const warn = (e: BeforeUnloadEvent) => {
+      if (pendingRef.current.size === 0) return;
+      e.preventDefault();
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, []);
+
   const onFileChosen = async (file: File | null) => {
     const el = activeImageRef.current;
     if (!file || !el) return;
@@ -133,6 +144,8 @@ export function EditOverlay({ route }: { route: string }) {
       setError(result.error ?? "Save failed.");
       return;
     }
+    // Saved — let the reload below proceed without the unsaved-changes prompt.
+    pendingRef.current.clear();
     // Full reload on purpose: the page must re-render on the server with the
     // saved values (revalidated), not from client cache.
     // eslint-disable-next-line @next/next/no-location-assign-relative-destination

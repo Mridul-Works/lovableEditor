@@ -1,10 +1,10 @@
 "use server";
 
-import { revalidatePath, updateTag } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { redirect } from "next/navigation";
 import { imageSize } from "image-size";
 import { db } from "@/lib/db";
-import { getSession, loginWithCredentials, logout, requireAdmin } from "@/lib/auth";
+import { TooManyAttemptsError, getSession, loginWithCredentials, logout, requireAdmin } from "@/lib/auth";
 import { normalizeRoute } from "@/lib/importer/extract";
 import { importPageFromSource } from "@/lib/importer/import-page";
 import { bundlePageFromRepo } from "@/lib/importer/bundle";
@@ -12,6 +12,24 @@ import { getGithubToken, getRepo, getTree, setGithubToken, listRepos } from "@/l
 import { pageCacheTag } from "@/lib/pages";
 import { ALLOWED_IMAGE_TYPES, storage } from "@/lib/storage";
 import type { ImportReport } from "@/lib/tree";
+
+/**
+ * Errors we raise ourselves carry text meant for the admin ("Route /admin is
+ * reserved", "GitHub rejected the token"). Errors from the database do not:
+ * their messages leak table and column names. Show the former, log the latter.
+ */
+function userMessage(e: unknown, fallback: string): string {
+  const code = (e as { code?: unknown })?.code;
+  const name = (e as { name?: unknown })?.name;
+  const isDbError =
+    (typeof code === "string" && /^P\d{4}$/.test(code)) ||
+    (typeof name === "string" && name.startsWith("Prisma"));
+  if (isDbError) {
+    console.error("[action] database error", e);
+    return fallback;
+  }
+  return e instanceof Error ? e.message : fallback;
+}
 
 // ---------------------------------------------------------------------------
 // Auth
@@ -24,7 +42,13 @@ export async function loginAction(_prev: LoginState, formData: FormData): Promis
   const password = String(formData.get("password") ?? "");
   if (!email || !password) return { error: "Email and password are required." };
 
-  const session = await loginWithCredentials(email, password);
+  let session;
+  try {
+    session = await loginWithCredentials(email, password);
+  } catch (e) {
+    if (e instanceof TooManyAttemptsError) return { error: e.message };
+    throw e;
+  }
   if (!session) return { error: "Invalid email or password." };
 
   const next = String(formData.get("next") ?? "");
@@ -77,7 +101,7 @@ export async function importPageAction(_prev: ImportState, formData: FormData): 
       themeCss: themeCss || undefined,
       tailwindConfig: tailwindConfig || undefined,
     });
-    updateTag(pageCacheTag(route));
+    revalidateTag(pageCacheTag(route), "max");
     revalidatePath(route);
     revalidatePath("/admin");
     if (outcome.reimported) revalidatePath(`/admin/pages/${outcome.pageId}`);
@@ -88,7 +112,7 @@ export async function importPageAction(_prev: ImportState, formData: FormData): 
       reimported: outcome.reimported,
     };
   } catch (e) {
-    return { error: e instanceof Error ? e.message : "Import failed." };
+    return { error: userMessage(e, "Import failed.") };
   }
 }
 
@@ -108,7 +132,7 @@ export async function connectGithubAction(_prev: ConnectState, formData: FormDat
     revalidatePath("/admin/projects");
     return { ok: true };
   } catch (e) {
-    return { error: e instanceof Error ? e.message : "Could not reach GitHub with that token." };
+    return { error: userMessage(e, "Could not reach GitHub with that token.") };
   }
 }
 
@@ -160,10 +184,11 @@ export async function importFromGithubAction(
       tailwindConfig: bundle.tailwindConfig,
       indexHtml: bundle.indexHtml,
       assetUrls: bundle.assetUrls,
+      truncated: bundle.truncated,
       origin: { repo: `${owner}/${repo}`, branch, path: pagePath },
     });
 
-    updateTag(pageCacheTag(route));
+    revalidateTag(pageCacheTag(route), "max");
     revalidatePath(route);
     revalidatePath("/admin");
     revalidatePath(`/admin/projects/${owner}/${repo}`);
@@ -176,7 +201,7 @@ export async function importFromGithubAction(
       assetsUploaded: bundle.assetsUploaded.length,
     };
   } catch (e) {
-    return { error: e instanceof Error ? e.message : "GitHub import failed." };
+    return { error: userMessage(e, "GitHub import failed.") };
   }
 }
 
@@ -206,10 +231,11 @@ export async function syncPageAction(pageId: string): Promise<GithubImportState>
       tailwindConfig: bundle.tailwindConfig,
       indexHtml: bundle.indexHtml,
       assetUrls: bundle.assetUrls,
+      truncated: bundle.truncated,
       origin: { repo: page.sourceRepo, branch, path: page.sourcePath },
     });
 
-    updateTag(pageCacheTag(page.route));
+    revalidateTag(pageCacheTag(page.route), "max");
     revalidatePath(page.route);
     revalidatePath("/admin");
     revalidatePath(`/admin/pages/${pageId}`);
@@ -222,7 +248,7 @@ export async function syncPageAction(pageId: string): Promise<GithubImportState>
       assetsUploaded: bundle.assetsUploaded.length,
     };
   } catch (e) {
-    return { error: e instanceof Error ? e.message : "Sync failed." };
+    return { error: userMessage(e, "Sync failed.") };
   }
 }
 
@@ -233,9 +259,16 @@ export async function syncPageAction(pageId: string): Promise<GithubImportState>
 async function revalidatePage(pageId: string) {
   const page = await db.page.findUnique({ where: { id: pageId }, select: { route: true } });
   if (page) {
-    updateTag(pageCacheTag(page.route));
+    revalidateTag(pageCacheTag(page.route), "max");
     revalidatePath(page.route);
   }
+}
+
+/** Guards against a single field being used to write unbounded rows. */
+const MAX_FIELD_VALUE = 100_000;
+
+function tooLong(updates: Array<{ value: string | null }>) {
+  return updates.some((u) => (u.value?.length ?? 0) > MAX_FIELD_VALUE);
 }
 
 export async function saveFieldsAction(
@@ -244,6 +277,7 @@ export async function saveFieldsAction(
 ): Promise<{ ok: boolean; error?: string }> {
   await requireAdmin();
   if (updates.length === 0) return { ok: true };
+  if (tooLong(updates)) return { ok: false, error: "One of the values is too long (100,000 characters max)." };
 
   try {
     await db.$transaction(
@@ -258,7 +292,7 @@ export async function saveFieldsAction(
     revalidatePath(`/admin/pages/${pageId}`);
     return { ok: true };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Save failed." };
+    return { ok: false, error: userMessage(e, "Save failed.") };
   }
 }
 
@@ -268,6 +302,7 @@ export async function saveFieldsByKeyAction(
   updates: Array<{ key: string; value: string }>,
 ): Promise<{ ok: boolean; error?: string }> {
   await requireAdmin();
+  if (tooLong(updates)) return { ok: false, error: "One of the values is too long (100,000 characters max)." };
   const page = await db.page.findUnique({ where: { route }, select: { id: true } });
   if (!page) return { ok: false, error: "Page not found." };
 
@@ -284,7 +319,7 @@ export async function saveFieldsByKeyAction(
     revalidatePath(`/admin/pages/${page.id}`);
     return { ok: true };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Save failed." };
+    return { ok: false, error: userMessage(e, "Save failed.") };
   }
 }
 
@@ -295,7 +330,7 @@ export async function saveFieldsByKeyAction(
 export async function setPageStatusAction(pageId: string, status: "DRAFT" | "PUBLISHED") {
   await requireAdmin();
   const page = await db.page.update({ where: { id: pageId }, data: { status } });
-  updateTag(pageCacheTag(page.route));
+  revalidateTag(pageCacheTag(page.route), "max");
   revalidatePath(page.route);
   revalidatePath("/admin");
   return { ok: true };
@@ -304,7 +339,7 @@ export async function setPageStatusAction(pageId: string, status: "DRAFT" | "PUB
 export async function deletePageAction(pageId: string) {
   await requireAdmin();
   const page = await db.page.delete({ where: { id: pageId } });
-  updateTag(pageCacheTag(page.route));
+  revalidateTag(pageCacheTag(page.route), "max");
   revalidatePath(page.route);
   revalidatePath("/admin");
   return { ok: true };
@@ -354,12 +389,15 @@ export async function uploadMediaAction(formData: FormData): Promise<UploadResul
     revalidatePath("/admin/media");
     return { ok: true, asset: { id: asset.id, url: asset.url, filename: asset.filename, width, height } };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Upload failed." };
+    return { ok: false, error: userMessage(e, "Upload failed.") };
   }
 }
 
 /** How many fields currently reference this asset's URL. */
 export async function assetReferenceCount(url: string) {
+  // Exported from a "use server" module, so this is a callable endpoint even
+  // though only admin screens use it.
+  await requireAdmin();
   return db.field.count({
     where: { OR: [{ value: url }, { value: null, defaultValue: url }] },
   });
