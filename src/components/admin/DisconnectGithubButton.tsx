@@ -17,7 +17,7 @@ export function DisconnectGithubButton() {
         })
       }
       disabled={pending}
-      className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+      className="rounded-full border border-neutral-300 px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:bg-neutral-50 disabled:opacity-50"
     >
       {pending ? "Disconnecting..." : "Disconnect GitHub"}
     </button>

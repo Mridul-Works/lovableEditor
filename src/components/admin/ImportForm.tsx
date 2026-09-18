@@ -10,7 +10,7 @@ export function ImportForm() {
 
   return (
     <div className="space-y-6">
-      <form action={formAction} className="space-y-4 rounded-xl border border-slate-200 bg-white p-6">
+      <form action={formAction} className="space-y-4 rounded-2xl border border-neutral-200 bg-white p-6">
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="block">
             <span className="mb-1 block text-sm font-medium">Target route</span>
@@ -18,15 +18,15 @@ export function ImportForm() {
               name="route"
               required
               placeholder="/pricing"
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+              className="w-full rounded-lg border border-neutral-300 px-3 py-2 font-mono text-sm outline-none focus:border-ink focus:ring-2 focus:ring-sun/60"
             />
           </label>
           <label className="block">
-            <span className="mb-1 block text-sm font-medium">Title <span className="text-slate-400">(optional)</span></span>
+            <span className="mb-1 block text-sm font-medium">Title <span className="text-neutral-400">(optional)</span></span>
             <input
               name="title"
               placeholder="Derived from the page's first heading"
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+              className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-ink focus:ring-2 focus:ring-sun/60"
             />
           </label>
         </div>
@@ -37,7 +37,7 @@ export function ImportForm() {
             name="source"
             rows={14}
             placeholder="Paste the exported TSX here..."
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-xs outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+            className="w-full rounded-lg border border-neutral-300 px-3 py-2 font-mono text-xs outline-none focus:border-ink focus:ring-2 focus:ring-sun/60"
           />
         </label>
 
@@ -48,51 +48,51 @@ export function ImportForm() {
               name="file"
               type="file"
               accept=".tsx,.jsx,.ts,.js,text/plain"
-              className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-sm file:font-medium hover:file:bg-slate-200"
+              className="block w-full text-sm text-neutral-600 file:mr-3 file:rounded-lg file:border-0 file:bg-neutral-100 file:px-3 file:py-2 file:text-sm file:font-medium hover:file:bg-neutral-200"
             />
           </label>
         </div>
 
-        <details className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
-          <summary className="cursor-pointer font-medium text-slate-700">
+        <details className="rounded-lg border border-neutral-200 bg-neutral-50 p-3 text-sm">
+          <summary className="cursor-pointer font-medium text-neutral-700">
             Exact design match (optional — paste the project&apos;s index.css and tailwind.config.ts)
           </summary>
           <label className="mt-3 block">
-            <span className="mb-1 block text-xs font-medium text-slate-600">src/index.css (theme variables)</span>
+            <span className="mb-1 block text-xs font-medium text-neutral-600">src/index.css (theme variables)</span>
             <textarea
               name="themeCss"
               rows={5}
               placeholder=":root { --primary: 262 83% 58%; ... }"
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-xs outline-none focus:border-indigo-500"
+              className="w-full rounded-lg border border-neutral-300 px-3 py-2 font-mono text-xs outline-none focus:border-ink"
             />
           </label>
           <label className="mt-3 block">
-            <span className="mb-1 block text-xs font-medium text-slate-600">tailwind.config.ts (custom colors, gradients, shadows, animations)</span>
+            <span className="mb-1 block text-xs font-medium text-neutral-600">tailwind.config.ts (custom colors, gradients, shadows, animations)</span>
             <textarea
               name="tailwindConfig"
               rows={5}
               placeholder="export default { theme: { extend: { ... } } }"
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-xs outline-none focus:border-indigo-500"
+              className="w-full rounded-lg border border-neutral-300 px-3 py-2 font-mono text-xs outline-none focus:border-ink"
             />
           </label>
         </details>
 
         {state.error ? (
-          <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{state.error}</p>
+          <p className="rounded-xl bg-alert/10 px-4 py-3 text-sm text-alert">{state.error}</p>
         ) : null}
 
         <button
           type="submit"
           disabled={pending}
-          className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+          className="rounded-full bg-ink px-5 py-2.5 text-sm font-semibold text-white hover:bg-coal disabled:opacity-50"
         >
           {pending ? "Importing..." : "Import page"}
         </button>
       </form>
 
       {report ? (
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-6">
-          <h2 className="text-lg font-bold text-emerald-900">
+        <div className="rounded-2xl border border-leaf/25 bg-mint/60 p-6">
+          <h2 className="text-lg font-bold text-leaf">
             {state.reimported ? "Re-import complete" : "Import complete"} — {state.route}
           </h2>
 
@@ -125,7 +125,7 @@ export function ImportForm() {
           <div className="mt-6 flex gap-3">
             <Link
               href={`/admin/pages/${state.pageId}`}
-              className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-600"
+              className="rounded-full bg-ink px-4 py-2 text-sm font-semibold text-white hover:bg-coal"
             >
               Open editor
             </Link>
@@ -133,7 +133,7 @@ export function ImportForm() {
               href={state.route}
               target="_blank"
               rel="noreferrer"
-              className="rounded-lg border border-emerald-700 px-4 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-100"
+              className="rounded-full border border-leaf px-4 py-2 text-sm font-semibold text-leaf hover:bg-mint"
             >
               View page (draft)
             </a>
@@ -146,9 +146,9 @@ export function ImportForm() {
 
 function Stat({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-lg bg-white/70 px-3 py-2">
-      <dt className="text-xs text-emerald-700">{label}</dt>
-      <dd className="text-xl font-bold text-emerald-900 tabular-nums">{value}</dd>
+    <div className="rounded-xl bg-white/70 px-3 py-2">
+      <dt className="text-xs text-leaf">{label}</dt>
+      <dd className="text-xl font-bold text-leaf tabular-nums">{value}</dd>
     </div>
   );
 }
@@ -156,8 +156,8 @@ function Stat({ label, value }: { label: string; value: number }) {
 function ReportList({ title, items, mono }: { title: string; items: string[]; mono?: boolean }) {
   return (
     <div className="mt-4">
-      <h3 className="text-sm font-semibold text-emerald-900">{title}</h3>
-      <ul className={`mt-1 list-inside list-disc text-sm text-emerald-800 ${mono ? "font-mono text-xs" : ""}`}>
+      <h3 className="text-sm font-semibold text-leaf">{title}</h3>
+      <ul className={`mt-1 list-inside list-disc text-sm text-leaf ${mono ? "font-mono text-xs" : ""}`}>
         {items.map((item) => (
           <li key={item}>{item}</li>
         ))}

@@ -548,6 +548,7 @@ function mapCallResult(e: t.CallExpression, ctx: Ctx, depth: number): t.ArrayExp
     const scope: Scope = new Map();
     bindPattern(fn.params[0], item, propertyLookup(item, ctx), scope, ctx, () => entriesOf(item, ctx));
     if (fn.params[1]?.type === "Identifier") scope.set(fn.params[1].name, i);
+    bindBodyLocals(fn, scope, ctx);
     ctx.scopes.push(scope);
     const value = materialize(body, ctx, depth + 1);
     ctx.scopes.pop();
@@ -1797,6 +1798,8 @@ async function convertExpression(
           const item = el;
           bindPattern(fn.params[0], item, propertyLookup(item, ctx), scope, ctx, () => entriesOf(item, ctx));
           if (indexParam) scope.set(indexParam, i);
+          // `{logos.map((l) => { const name = l.file.replace(...); return <img alt={name} /> })}`
+          bindBodyLocals(fn, scope, ctx);
           ctx.scopes.push(scope);
           results.push(...(await convertExpression(body, ctx, parentTag, inSvg)));
           ctx.scopes.pop();

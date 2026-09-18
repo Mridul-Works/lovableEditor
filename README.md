@@ -15,6 +15,21 @@ imports to bundle every section component, applies the project's `index.css` the
 uploads the repo's image assets into the media library. After design changes in Lovable,
 hit **Sync** on the page (pages list or project view) — content edits survive.
 
+**Dashboard.** `/admin` is a dashboard backed by TanStack Query: totals (pages, published,
+drafts, pages behind GitHub, placeholder images, fields, media), one card per connected
+Lovable project with GitHub's current head commit, push time, last sync and buttons to
+import missing or sync outdated pages, and the page list with source, sync state, import
+quality, filters and search. It refreshes every five minutes and on **Check GitHub now**;
+GitHub is asked at most once a minute per project.
+
+**Look and feel.** The admin UI takes its theme from mastersunion.org: ink `#090909` and the
+neutral grey ramp, sun yellow `#FAD133` as accent, leaf green for positive states, ember
+orange for warnings, pill-shaped controls, and one signature — page titles end in a light
+italic Fraunces word underlined by the brand's blue-yellow-orange squiggle. Tokens live in
+`src/app/globals.css`; Outfit (standing in for the site's licensed geometric sans) and
+Fraunces load at runtime through `BrandFonts`, on admin surfaces only, so imported pages
+keep their own typography and the build needs no network.
+
 **Syncing a whole project.** A Lovable project is a site, not a page. The project screen
 (**Admin → Lovable projects → a repo**) shows how many of its page files are imported and
 which are behind the latest push, and **Sync entire project** imports the missing pages
@@ -57,7 +72,9 @@ stored copies instead of downloading everything again.
 What is stripped by design: state, event handlers, effects, `<script>`,
 `dangerouslySetInnerHTML` — the import report says exactly what was removed. Unknown
 components (shadcn/ui etc.) render as passthrough wrappers; lucide icons are baked in as
-inline SVG from `lucide-static`.
+inline SVG from `lucide-static`, with alias spellings (`ImageIcon`, `LucideX`) and the brand
+icons lucide retired in v1 (Instagram, Linkedin, Youtube, Twitter, Facebook, Github, …)
+served from the pinned `lucide-static-legacy` alias package.
 
 ## Setup
 

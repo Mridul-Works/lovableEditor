@@ -783,3 +783,23 @@ test("helper guard clauses run in order, and an unset env token means 'no logo',
   assert.equal(marks.length, 1);
   assert.equal(textOf(marks, result.fields), "Acme Robotics");
 });
+
+test("lucide alias spellings and retired brand icons render as inline SVG", async () => {
+  const result = await extractPage(`
+    import { ImageIcon, LucideArrowRight, Youtube, Instagram } from "lucide-react";
+    const VIDEOS = [{ kind: "youtube", title: "A" }, { kind: "cdn", title: "B" }];
+    export default function Page() {
+      return (
+        <footer>
+          <ImageIcon className="h-4 w-4" />
+          <LucideArrowRight />
+          <a href="https://instagram.com/x" aria-label="Instagram"><Instagram size={18} /></a>
+          {VIDEOS.map((v) => <span key={v.title}>{v.kind === "youtube" ? <Youtube /> : <b>play</b>}</span>)}
+        </footer>
+      );
+    }
+  `);
+  assert.equal(tags(result, "svg").length, 4, "every icon resolved to an <svg>");
+  assert.equal(elements(result.tree).filter((e) => e.props["data-cms-icon-placeholder"] !== undefined).length, 0);
+  assert.ok(result.report.renderedIcons.includes("Youtube"));
+});

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { MediaGrid } from "@/components/admin/MediaGrid";
+import { PageTitle } from "@/components/admin/PageTitle";
 
 export const dynamic = "force-dynamic";
 
@@ -42,8 +43,8 @@ export default async function MediaPage({
   return (
     <div>
       <div className="mb-6 flex items-baseline justify-between">
-        <h1 className="text-2xl font-bold">Media library</h1>
-        <p className="text-sm text-slate-500">
+        <PageTitle lead="Media" accent="library" />
+        <p className="text-sm text-neutral-500">
           {total} file{total === 1 ? "" : "s"}
           {pageCount > 1 ? ` \u00b7 page ${current} of ${pageCount}` : ""}
         </p>
@@ -62,12 +63,12 @@ export default async function MediaPage({
       {pageCount > 1 ? (
         <nav className="mt-6 flex items-center gap-3 text-sm">
           {current > 1 ? (
-            <Link href={`/admin/media?page=${current - 1}`} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 hover:bg-slate-50">
+            <Link href={`/admin/media?page=${current - 1}`} className="rounded-full border border-neutral-300 bg-white px-3 py-1.5 hover:bg-neutral-50">
               Previous
             </Link>
           ) : null}
           {current < pageCount ? (
-            <Link href={`/admin/media?page=${current + 1}`} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 hover:bg-slate-50">
+            <Link href={`/admin/media?page=${current + 1}`} className="rounded-full border border-neutral-300 bg-white px-3 py-1.5 hover:bg-neutral-50">
               Next
             </Link>
           ) : null}

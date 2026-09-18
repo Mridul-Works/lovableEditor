@@ -47,29 +47,29 @@ export function PageRowActions({
   if (confirming) {
     return (
       <span className="inline-flex items-center gap-2 text-xs">
-        <span className="text-slate-600">Delete {route}?</span>
-        <button onClick={remove} disabled={pending} className="font-semibold text-red-600 hover:underline disabled:opacity-50">
+        <span className="text-neutral-600">Delete {route}?</span>
+        <button onClick={remove} disabled={pending} className="font-semibold text-alert hover:underline disabled:opacity-50">
           {pending ? "Deleting..." : "Yes, delete"}
         </button>
-        <button onClick={() => setConfirming(false)} className="text-slate-500 hover:underline">Cancel</button>
+        <button onClick={() => setConfirming(false)} className="text-neutral-500 hover:underline">Cancel</button>
       </span>
     );
   }
 
   return (
-    <span className="inline-flex flex-wrap items-center justify-end gap-3 text-xs font-medium">
-      {syncMessage ? <span className="text-slate-500">{syncMessage}</span> : null}
-      <Link href={`/admin/pages/${pageId}`} className="text-indigo-600 hover:underline">Edit</Link>
-      <a href={route} target="_blank" rel="noreferrer" className="text-slate-600 hover:underline">View</a>
+    <span className="inline-flex items-center justify-end gap-3 whitespace-nowrap text-xs font-medium">
+      {syncMessage ? <span className="text-neutral-500">{syncMessage}</span> : null}
+      <Link href={`/admin/pages/${pageId}`} className="text-leaf hover:underline">Edit</Link>
+      <a href={route} target="_blank" rel="noreferrer" className="text-neutral-600 hover:underline">View</a>
       {hasGithubSource ? (
-        <button onClick={sync} disabled={pending} className="text-indigo-600 hover:underline disabled:opacity-50">
+        <button onClick={sync} disabled={pending} className="text-leaf hover:underline disabled:opacity-50">
           {pending ? "Syncing..." : "Sync"}
         </button>
       ) : null}
-      <button onClick={toggleStatus} disabled={pending} className="text-slate-600 hover:underline disabled:opacity-50">
+      <button onClick={toggleStatus} disabled={pending} className="text-neutral-600 hover:underline disabled:opacity-50">
         {status === "PUBLISHED" ? "Unpublish" : "Publish"}
       </button>
-      <button onClick={() => setConfirming(true)} className="text-red-600 hover:underline">Delete</button>
+      <button onClick={() => setConfirming(true)} className="text-alert hover:underline">Delete</button>
     </span>
   );
 }

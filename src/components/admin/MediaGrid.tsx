@@ -46,7 +46,7 @@ export function MediaGrid({ assets }: { assets: AssetRow[] }) {
 
   return (
     <div className="space-y-6">
-      <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500">
+      <label className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-ink px-4 py-2 text-sm font-semibold text-white hover:bg-coal">
         {uploading ? "Uploading..." : "Upload image"}
         <input
           type="file"
@@ -61,31 +61,31 @@ export function MediaGrid({ assets }: { assets: AssetRow[] }) {
         />
       </label>
 
-      {error ? <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p> : null}
+      {error ? <p className="rounded-xl bg-alert/10 px-4 py-3 text-sm text-alert">{error}</p> : null}
 
       {assets.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-slate-300 bg-white p-12 text-center text-slate-500">
+        <div className="rounded-2xl border border-dashed border-neutral-300 bg-white p-12 text-center text-neutral-500">
           No images uploaded yet.
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
           {assets.map((a) => (
-            <div key={a.id} className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+            <div key={a.id} className="overflow-hidden rounded-2xl border border-neutral-200 bg-white">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={a.url} alt={a.filename} className="h-32 w-full bg-slate-50 object-cover" />
+              <img src={a.url} alt={a.filename} className="h-32 w-full bg-neutral-50 object-cover" />
               <div className="p-3 text-xs">
-                <p className="truncate font-medium text-slate-800" title={a.filename}>{a.filename}</p>
-                <p className="mt-0.5 text-slate-500">
+                <p className="truncate font-medium text-neutral-800" title={a.filename}>{a.filename}</p>
+                <p className="mt-0.5 text-neutral-500">
                   {a.width && a.height ? `${a.width}×${a.height} · ` : ""}
                   {new Date(a.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
                 </p>
                 <div className="mt-2 flex items-center justify-between">
-                  <span className={a.references > 0 ? "text-emerald-600" : "text-slate-400"}>
+                  <span className={a.references > 0 ? "text-leaf" : "text-neutral-400"}>
                     {a.references > 0 ? `Used by ${a.references} field${a.references === 1 ? "" : "s"}` : "Unused"}
                   </span>
                   <button
                     onClick={() => { setConfirmDelete(a); setError(null); }}
-                    className="font-semibold text-red-600 hover:underline"
+                    className="font-semibold text-alert hover:underline"
                   >
                     Delete
                   </button>
@@ -97,26 +97,26 @@ export function MediaGrid({ assets }: { assets: AssetRow[] }) {
       )}
 
       {confirmDelete ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-6" onClick={() => setConfirmDelete(null)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/50 p-6" onClick={() => setConfirmDelete(null)}>
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold">Delete “{confirmDelete.filename}”?</h3>
-            <p className="mt-2 text-sm text-slate-600">
+            <p className="mt-2 text-sm text-neutral-600">
               {confirmDelete.references > 0
                 ? `This image is referenced by ${confirmDelete.references} content field${confirmDelete.references === 1 ? "" : "s"}. Deleting it will leave those fields pointing at a missing file.`
                 : "This image is not referenced by any content field."}
             </p>
-            {error ? <p className="mt-2 text-sm text-red-600">{error}</p> : null}
+            {error ? <p className="mt-2 text-sm text-alert">{error}</p> : null}
             <div className="mt-5 flex justify-end gap-3">
               <button
                 onClick={() => setConfirmDelete(null)}
-                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-50"
+                className="rounded-full border border-neutral-300 px-4 py-2 text-sm font-medium hover:bg-neutral-50"
               >
                 Cancel
               </button>
               <button
                 onClick={() => remove(confirmDelete, confirmDelete.references > 0)}
                 disabled={pending}
-                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-50"
+                className="rounded-full bg-alert px-4 py-2 text-sm font-semibold text-white hover:bg-alert/90 disabled:opacity-50"
               >
                 {pending ? "Deleting..." : confirmDelete.references > 0 ? "Delete anyway" : "Delete"}
               </button>

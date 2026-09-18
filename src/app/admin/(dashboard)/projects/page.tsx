@@ -3,6 +3,7 @@ import { GithubError, getGithubToken, listRepos, type Repo } from "@/lib/github"
 import { ConnectGithubForm } from "@/components/admin/ConnectGithubForm";
 import { DisconnectGithubButton } from "@/components/admin/DisconnectGithubButton";
 import { db } from "@/lib/db";
+import { PageTitle } from "@/components/admin/PageTitle";
 
 export const dynamic = "force-dynamic";
 
@@ -12,8 +13,8 @@ export default async function ProjectsPage() {
   if (!token) {
     return (
       <div className="max-w-xl">
-        <h1 className="mb-1 text-2xl font-bold">Lovable projects</h1>
-        <p className="mb-6 text-sm text-slate-500">
+        <div className="mb-4"><PageTitle lead="Lovable" accent="projects" /></div>
+        <p className="mb-6 text-sm text-neutral-500">
           Lovable syncs every project to GitHub (free plan included). Connect the GitHub account
           Lovable pushes to, and you can browse your projects and import pages with one click.
         </p>
@@ -35,8 +36,8 @@ export default async function ProjectsPage() {
   if (error) {
     return (
       <div className="max-w-xl">
-        <h1 className="mb-4 text-2xl font-bold">Lovable projects</h1>
-        <p className="mb-6 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>
+        <div className="mb-6"><PageTitle lead="Lovable" accent="projects" /></div>
+        <p className="mb-6 rounded-xl bg-alert/10 px-4 py-3 text-sm text-alert">{error}</p>
         <ConnectGithubForm />
       </div>
     );
@@ -51,16 +52,13 @@ export default async function ProjectsPage() {
     <div className="max-w-4xl">
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Lovable projects</h1>
-          <p className="mt-0.5 text-sm text-slate-500">
-            Repositories on the connected GitHub account, most recently updated first.
-          </p>
+          <PageTitle lead="Lovable" accent="projects" sub="Repositories on the connected GitHub account, most recently updated first." />
         </div>
         <DisconnectGithubButton />
       </div>
 
       {repos.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-slate-300 bg-white p-12 text-center text-slate-500">
+        <div className="rounded-2xl border border-dashed border-neutral-300 bg-white p-12 text-center text-neutral-500">
           No repositories found. In Lovable, use the GitHub button → Create repository, then refresh.
         </div>
       ) : (
@@ -69,19 +67,19 @@ export default async function ProjectsPage() {
             <Link
               key={r.fullName}
               href={`/admin/projects/${r.owner}/${r.name}`}
-              className="group rounded-xl border border-slate-200 bg-white p-4 hover:border-indigo-400 hover:ring-2 hover:ring-indigo-100"
+              className="group rounded-2xl border border-neutral-200 bg-white p-4 hover:border-ink hover:ring-2 hover:ring-sun/50"
             >
               <div className="flex items-center gap-2">
-                <span className="font-semibold text-slate-900 group-hover:text-indigo-700">{r.name}</span>
+                <span className="font-semibold text-neutral-900 group-hover:text-leaf">{r.name}</span>
                 {r.private ? (
-                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">private</span>
+                  <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-semibold text-neutral-500">private</span>
                 ) : null}
                 {importedRepos.has(r.fullName) ? (
-                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">imported</span>
+                  <span className="rounded-full bg-mint px-2 py-0.5 text-[10px] font-semibold text-leaf">imported</span>
                 ) : null}
               </div>
-              <p className="mt-1 line-clamp-2 text-xs text-slate-500">{r.description ?? "No description"}</p>
-              <p className="mt-2 text-[11px] text-slate-400">
+              <p className="mt-1 line-clamp-2 text-xs text-neutral-500">{r.description ?? "No description"}</p>
+              <p className="mt-2 text-[11px] text-neutral-400">
                 Updated {new Date(r.pushedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
               </p>
             </Link>

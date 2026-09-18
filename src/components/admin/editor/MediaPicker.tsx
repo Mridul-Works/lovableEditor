@@ -73,7 +73,7 @@ export function MediaPicker({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-6"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/60 p-6"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
@@ -83,18 +83,18 @@ export function MediaPicker({
         className="flex max-h-[85vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-3 border-b border-slate-200 px-5 py-3">
+        <div className="flex items-center gap-3 border-b border-neutral-200 px-5 py-3">
           <h3 className="text-base font-bold">Media library</h3>
-          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">{kind}s</span>
+          <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-500">{kind}s</span>
           <input
             type="search"
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search by file name..."
-            className="ml-auto w-64 rounded-lg border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-indigo-500"
+            className="ml-auto w-64 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm outline-none focus:border-ink"
           />
-          <label className="cursor-pointer rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500">
+          <label className="cursor-pointer rounded-full bg-ink px-3 py-1.5 text-xs font-semibold text-white hover:bg-coal">
             {upload.isPending ? "Uploading..." : "Upload"}
             <input
               type="file"
@@ -108,20 +108,20 @@ export function MediaPicker({
               }}
             />
           </label>
-          <button onClick={onClose} className="text-sm text-slate-500 hover:text-slate-900">Close</button>
+          <button onClick={onClose} className="text-sm text-neutral-500 hover:text-neutral-900">Close</button>
         </div>
 
         {upload.error ? (
-          <p className="border-b border-red-100 bg-red-50 px-5 py-2 text-xs text-red-700">{upload.error.message}</p>
+          <p className="border-b border-alert/40 bg-alert/10 px-5 py-2 text-xs text-alert">{upload.error.message}</p>
         ) : null}
 
         <div className="min-h-0 flex-1 overflow-y-auto p-5">
           {media.isPending ? (
-            <p className="py-16 text-center text-sm text-slate-500">Loading...</p>
+            <p className="py-16 text-center text-sm text-neutral-500">Loading...</p>
           ) : media.isError ? (
-            <p className="py-16 text-center text-sm text-red-600">{media.error.message}</p>
+            <p className="py-16 text-center text-sm text-alert">{media.error.message}</p>
           ) : assets.length === 0 ? (
-            <p className="py-16 text-center text-sm text-slate-500">
+            <p className="py-16 text-center text-sm text-neutral-500">
               {debounced ? "Nothing matches that search." : `No ${kind}s uploaded yet. Upload one above.`}
             </p>
           ) : (
@@ -131,7 +131,7 @@ export function MediaPicker({
                   key={a.id}
                   onClick={() => onSelect(a.url)}
                   title={a.filename}
-                  className="group overflow-hidden rounded-lg border border-slate-200 bg-slate-50 text-left hover:border-indigo-400 hover:ring-2 hover:ring-indigo-200"
+                  className="group overflow-hidden rounded-lg border border-neutral-200 bg-neutral-50 text-left hover:border-ink hover:ring-2 hover:ring-sun/50"
                 >
                   {kind === "video" ? (
                     <video src={a.url} muted preload="metadata" className="h-24 w-full bg-black object-cover" />
@@ -139,7 +139,7 @@ export function MediaPicker({
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={a.url} alt={a.filename} loading="lazy" className="h-24 w-full object-cover" />
                   )}
-                  <span className="block truncate px-2 py-1 text-[11px] text-slate-500">{a.filename}</span>
+                  <span className="block truncate px-2 py-1 text-[11px] text-neutral-500">{a.filename}</span>
                 </button>
               ))}
             </div>
@@ -149,7 +149,7 @@ export function MediaPicker({
               <button
                 onClick={() => void media.fetchNextPage()}
                 disabled={media.isFetchingNextPage}
-                className="rounded-lg border border-slate-300 px-4 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                className="rounded-full border border-neutral-300 px-4 py-1.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
               >
                 {media.isFetchingNextPage ? "Loading..." : "Load more"}
               </button>

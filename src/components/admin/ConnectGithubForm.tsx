@@ -7,8 +7,8 @@ export function ConnectGithubForm() {
   const [state, formAction, pending] = useActionState<ConnectState, FormData>(connectGithubAction, {});
 
   return (
-    <form action={formAction} className="space-y-4 rounded-xl border border-slate-200 bg-white p-6">
-      <ol className="list-inside list-decimal space-y-1 text-sm text-slate-600">
+    <form action={formAction} className="space-y-4 rounded-2xl border border-neutral-200 bg-white p-6">
+      <ol className="list-inside list-decimal space-y-1 text-sm text-neutral-600">
         <li>
           In Lovable: <strong>GitHub button (top right) → Connect → Create repository</strong> — your
           project code is now on GitHub and stays in sync.
@@ -19,7 +19,7 @@ export function ConnectGithubForm() {
             href="https://github.com/settings/personal-access-tokens/new"
             target="_blank"
             rel="noreferrer"
-            className="text-indigo-600 underline"
+            className="text-leaf underline"
           >
             Settings → Developer settings → Fine-grained tokens
           </a>
@@ -35,18 +35,18 @@ export function ConnectGithubForm() {
           required
           placeholder="github_pat_… or ghp_…"
           autoComplete="off"
-          className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+          className="w-full rounded-lg border border-neutral-300 px-3 py-2 font-mono text-sm outline-none focus:border-ink focus:ring-2 focus:ring-sun/60"
         />
       </label>
-      {state.error ? <p className="text-sm text-red-600">{state.error}</p> : null}
+      {state.error ? <p className="text-sm text-alert">{state.error}</p> : null}
       <button
         type="submit"
         disabled={pending}
-        className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+        className="rounded-full bg-ink px-5 py-2.5 text-sm font-semibold text-white hover:bg-coal disabled:opacity-50"
       >
         {pending ? "Checking token..." : "Connect GitHub"}
       </button>
-      <p className="text-xs text-slate-400">
+      <p className="text-xs text-neutral-400">
         The token is stored in this app&apos;s own database and only used server-side to read your
         repositories. Alternatively set GITHUB_TOKEN in .env.
       </p>

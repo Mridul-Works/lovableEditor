@@ -335,18 +335,18 @@ export function PageEditor({ initial }: { initial: PageFieldsResponse }) {
 
   // ---- render ------------------------------------------------------------
   return (
-    <div className="-m-8 flex h-screen flex-col bg-slate-100">
-      <header className="flex flex-wrap items-center gap-3 border-b border-slate-200 bg-white px-5 py-3">
-        <Link href="/admin" className="text-sm text-slate-500 hover:text-slate-900">← Pages</Link>
+    <div className="-m-8 flex h-screen flex-col bg-neutral-100">
+      <header className="flex flex-wrap items-center gap-3 border-b border-neutral-200 bg-white px-5 py-3">
+        <Link href="/admin" className="text-sm text-neutral-500 hover:text-neutral-900">← Pages</Link>
         <div className="min-w-0">
           <h1 className="truncate text-lg font-bold leading-tight">{page.title}</h1>
-          <p className="font-mono text-xs text-slate-500">{page.route}</p>
+          <p className="font-mono text-xs text-neutral-500">{page.route}</p>
         </div>
         <span
           className={
             page.status === "PUBLISHED"
-              ? "rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700"
-              : "rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700"
+              ? "rounded-full bg-mint px-2.5 py-0.5 text-xs font-semibold text-leaf"
+              : "rounded-full bg-ember/15 px-2.5 py-0.5 text-xs font-semibold text-ember-ink"
           }
         >
           {page.status === "PUBLISHED" ? "Published" : "Draft"}
@@ -358,7 +358,7 @@ export function PageEditor({ initial }: { initial: PageFieldsResponse }) {
               onClick={() => sync.mutate()}
               disabled={sync.isPending}
               title={`Re-import ${page.sourceRepo}; your edits are kept`}
-              className="rounded-lg border border-slate-300 px-3 py-1.5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              className="rounded-full border border-neutral-300 px-3 py-1.5 text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
             >
               {sync.isPending ? "Syncing..." : "Sync from GitHub"}
             </button>
@@ -367,7 +367,7 @@ export function PageEditor({ initial }: { initial: PageFieldsResponse }) {
             type="button"
             onClick={() => status.mutate(page.status === "PUBLISHED" ? "DRAFT" : "PUBLISHED")}
             disabled={status.isPending}
-            className="rounded-lg border border-slate-300 px-3 py-1.5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            className="rounded-full border border-neutral-300 px-3 py-1.5 text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
           >
             {page.status === "PUBLISHED" ? "Unpublish" : "Publish"}
           </button>
@@ -375,7 +375,7 @@ export function PageEditor({ initial }: { initial: PageFieldsResponse }) {
             href={page.route}
             target="_blank"
             rel="noreferrer"
-            className="rounded-lg border border-slate-300 px-3 py-1.5 text-slate-700 hover:bg-slate-50"
+            className="rounded-full border border-neutral-300 px-3 py-1.5 text-neutral-700 hover:bg-neutral-50"
           >
             View live ↗
           </a>
@@ -384,16 +384,16 @@ export function PageEditor({ initial }: { initial: PageFieldsResponse }) {
 
       <div className="flex min-h-0 flex-1">
         {/* Field list */}
-        <section className="flex w-[520px] shrink-0 flex-col border-r border-slate-200 bg-slate-50">
-          <div className="flex items-center gap-2 border-b border-slate-200 bg-white px-4 py-2">
+        <section className="flex w-[520px] shrink-0 flex-col border-r border-neutral-200 bg-neutral-50">
+          <div className="flex items-center gap-2 border-b border-neutral-200 bg-white px-4 py-2">
             <input
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder={`Search ${fields.length} fields...`}
-              className="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+              className="w-full rounded-lg border border-neutral-300 px-3 py-1.5 text-sm outline-none focus:border-ink focus:ring-2 focus:ring-sun/60"
             />
-            <span className="shrink-0 text-xs text-slate-500">{shown} shown</span>
+            <span className="shrink-0 text-xs text-neutral-500">{shown} shown</span>
           </div>
 
           <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto">
@@ -411,15 +411,15 @@ export function PageEditor({ initial }: { initial: PageFieldsResponse }) {
                       <button
                         type="button"
                         onClick={() => toggleSection(row.section)}
-                        className="flex w-full items-center justify-between border-b border-slate-200 bg-white px-4 py-3 text-left text-xs font-bold uppercase tracking-wide text-slate-600 hover:bg-slate-50"
+                        className="flex w-full items-center justify-between border-b border-neutral-200 bg-white px-4 py-3 text-left text-xs font-bold uppercase tracking-wide text-neutral-600 hover:bg-neutral-50"
                       >
                         <span className="truncate pr-3 normal-case tracking-normal">
                           <span className="uppercase tracking-wide">{row.title.split(" · ")[0]}</span>
                           {row.title.includes(" · ") ? (
-                            <span className="ml-2 font-medium text-slate-400">{row.title.split(" · ").slice(1).join(" · ")}</span>
+                            <span className="ml-2 font-medium text-neutral-400">{row.title.split(" · ").slice(1).join(" · ")}</span>
                           ) : null}
                         </span>
-                        <span className="flex items-center gap-2 font-medium normal-case tracking-normal text-slate-400">
+                        <span className="flex items-center gap-2 font-medium normal-case tracking-normal text-neutral-400">
                           {row.count} field{row.count === 1 ? "" : "s"}
                           <span aria-hidden>{row.open ? "−" : "+"}</span>
                         </span>
@@ -428,20 +428,20 @@ export function PageEditor({ initial }: { initial: PageFieldsResponse }) {
                       <button
                         type="button"
                         onClick={() => setShowOrphans((v) => !v)}
-                        className="flex w-full items-center justify-between border-y border-amber-200 bg-amber-50 px-4 py-3 text-left text-xs font-bold uppercase tracking-wide text-amber-700"
+                        className="flex w-full items-center justify-between border-y border-ember/30 bg-ember/10 px-4 py-3 text-left text-xs font-bold uppercase tracking-wide text-ember-ink"
                       >
                         <span>Orphaned — edited text no longer in the page</span>
                         <span className="font-medium normal-case tracking-normal">{row.count} {showOrphans ? "−" : "+"}</span>
                       </button>
                     ) : row.kind === "orphan" ? (
-                      <div className="flex items-baseline gap-3 bg-amber-50/60 px-4 py-2 text-xs text-amber-900">
-                        <code className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5">{row.field.key}</code>
+                      <div className="flex items-baseline gap-3 bg-ember/5 px-4 py-2 text-xs text-ember-ink">
+                        <code className="shrink-0 rounded bg-ember/15 px-1.5 py-0.5">{row.field.key}</code>
                         <span className="truncate">{row.field.value ?? row.field.defaultValue}</span>
                       </div>
                     ) : (
                       <div
                         id={`field-${row.field.id}`}
-                        className={`border-b border-slate-200 px-4 py-3 ${focusedId === row.field.id ? "bg-indigo-50/60" : "bg-white"}`}
+                        className={`border-b border-neutral-200 px-4 py-3 ${focusedId === row.field.id ? "bg-sun/15" : "bg-white"}`}
                       >
                         <FieldRow
                           field={row.field}
@@ -465,17 +465,17 @@ export function PageEditor({ initial }: { initial: PageFieldsResponse }) {
               })}
             </div>
             {rows.length === 0 ? (
-              <p className="p-8 text-center text-sm text-slate-500">No fields match “{query}”.</p>
+              <p className="p-8 text-center text-sm text-neutral-500">No fields match “{query}”.</p>
             ) : null}
           </div>
 
           {/* Save bar */}
-          <div className="flex items-center gap-3 border-t border-slate-200 bg-white px-4 py-3">
+          <div className="flex items-center gap-3 border-t border-neutral-200 bg-white px-4 py-3">
             <button
               type="button"
               onClick={saveAll}
               disabled={!dirty || save.isPending}
-              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-40"
+              className="rounded-full bg-ink px-4 py-2 text-sm font-semibold text-white hover:bg-coal disabled:opacity-40"
             >
               {save.isPending ? "Saving..." : dirty ? `Save ${dirtyIds.length} change${dirtyIds.length === 1 ? "" : "s"}` : "Saved"}
             </button>
@@ -483,17 +483,17 @@ export function PageEditor({ initial }: { initial: PageFieldsResponse }) {
               type="button"
               onClick={discard}
               disabled={!dirty || save.isPending}
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+              className="rounded-full border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-40"
             >
               Discard
             </button>
             <span className="min-w-0 flex-1 truncate text-xs">
               {dirty ? (
-                <span className="font-medium text-amber-600">Unsaved changes · Ctrl+S to save</span>
+                <span className="font-medium text-ember-ink">Unsaved changes · Ctrl+S to save</span>
               ) : notice ? (
-                <span className={notice.tone === "ok" ? "text-emerald-600" : "text-red-600"}>{notice.text}</span>
+                <span className={notice.tone === "ok" ? "text-leaf" : "text-alert"}>{notice.text}</span>
               ) : (
-                <span className="text-slate-400">Edits go live on save.</span>
+                <span className="text-neutral-400">Edits go live on save.</span>
               )}
             </span>
           </div>

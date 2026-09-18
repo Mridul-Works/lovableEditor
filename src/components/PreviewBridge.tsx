@@ -10,8 +10,8 @@ import { safeUrl } from "@/lib/safe-url";
 // live, and it reports clicks back so the editor can jump to that field.
 // Everything crosses the boundary as field keys and plain string values.
 
-const HOVER = "2px dashed rgba(99, 102, 241, 0.9)";
-const SELECTED = "2px solid #6366f1";
+const HOVER = "2px dashed rgba(57, 182, 216, 0.95)";
+const SELECTED = "2px solid #39b6d8";
 
 function escapeKey(key: string) {
   return typeof CSS !== "undefined" && CSS.escape ? CSS.escape(key) : key.replace(/["\\]/g, "\\$&");

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { saveFieldsByKeyAction, uploadMediaAction } from "@/lib/actions";
 import { safeUrl } from "@/lib/safe-url";
+import { BrandFonts } from "@/components/admin/BrandFonts";
 
 // On-page editing, rendered only for a logged-in admin visiting a page with
 // ?edit=1. Text edits in place (contentEditable), images and backgrounds
@@ -13,8 +14,8 @@ import { safeUrl } from "@/lib/safe-url";
 // Changes are held locally until "Save all"; the save revalidates the route
 // and refreshes the server-rendered page in place — no full reload.
 
-const OUTLINE = "2px solid #6366f1";
-const OUTLINE_PENDING = "2px solid #f59e0b";
+const OUTLINE = "2px solid #39b6d8";
+const OUTLINE_PENDING = "2px solid #e38330";
 
 type UrlTarget = { key: string; kind: "link" | "video"; value: string };
 type FileTarget = { key: string; kind: "image" | "video" | "bg"; el: HTMLElement };
@@ -231,6 +232,7 @@ export function EditOverlay({ route, pageId }: { route: string; pageId: string }
 
   return (
     <>
+      <BrandFonts />
       <input
         ref={fileInputRef}
         type="file"
@@ -256,7 +258,7 @@ export function EditOverlay({ route, pageId }: { route: string; pageId: string }
             fileInputRef.current?.click();
           }}
           style={{ top: bgBadge.top, left: bgBadge.left, transform: "translateX(-100%)" }}
-          className="fixed z-[9998] rounded-md bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white shadow-lg hover:bg-indigo-500"
+          className="fixed z-[9998] rounded-full bg-sun px-3 py-1 font-brand text-[11px] font-semibold text-ink shadow-lg hover:bg-white"
         >
           Change background
         </button>
@@ -266,11 +268,11 @@ export function EditOverlay({ route, pageId }: { route: string; pageId: string }
         data-cms-overlay
         // Bottom-left: imported pages tend to park their own floating nav at
         // the bottom centre or right, and the toolbar must not cover it.
-        className="fixed bottom-4 left-4 z-[9999] flex max-w-[min(92vw,720px)] flex-col gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm text-slate-100 shadow-2xl ring-1 ring-slate-700"
+        className="fixed bottom-4 left-4 z-[9999] flex max-w-[min(92vw,720px)] flex-col gap-2 rounded-3xl bg-ink px-5 py-3 font-brand text-sm text-neutral-100 shadow-2xl ring-1 ring-white/15"
       >
         {urlTarget ? (
           <div className="flex items-center gap-2">
-            <span className="shrink-0 text-xs font-semibold text-slate-300">
+            <span className="shrink-0 text-xs font-semibold text-neutral-300">
               {urlTarget.kind === "link" ? "Link URL" : "Video URL"}
             </span>
             <input
@@ -282,13 +284,13 @@ export function EditOverlay({ route, pageId }: { route: string; pageId: string }
                 if (e.key === "Escape") setUrlTarget(null);
               }}
               spellCheck={false}
-              className="w-72 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 font-mono text-xs text-slate-100 outline-none focus:border-indigo-400"
+              className="w-72 rounded-md border border-neutral-600 bg-neutral-800 px-2 py-1 font-mono text-xs text-neutral-100 outline-none focus:border-sun"
             />
-            <button onClick={applyUrl} className="rounded-md bg-indigo-500 px-2.5 py-1 text-xs font-semibold hover:bg-indigo-400">
+            <button onClick={applyUrl} className="rounded-full bg-sun px-3 py-1 text-xs font-semibold text-ink hover:bg-white">
               Apply
             </button>
             {urlTarget.kind === "video" ? (
-              <label className="cursor-pointer rounded-md bg-slate-700 px-2.5 py-1 text-xs hover:bg-slate-600">
+              <label className="cursor-pointer rounded-full bg-white/10 px-3 py-1 text-xs hover:bg-white/20">
                 Upload
                 <input
                   type="file"
@@ -304,37 +306,37 @@ export function EditOverlay({ route, pageId }: { route: string; pageId: string }
                 />
               </label>
             ) : null}
-            <button onClick={() => setUrlTarget(null)} className="text-xs text-slate-400 hover:text-slate-200">Cancel</button>
+            <button onClick={() => setUrlTarget(null)} className="text-xs text-neutral-400 hover:text-neutral-200">Cancel</button>
           </div>
         ) : null}
 
         <div className="flex items-center gap-3">
           <span className="font-semibold">Edit mode</span>
-          <span className="rounded-full bg-slate-700 px-2 py-0.5 text-xs">
+          <span className="rounded-full bg-white/10 px-2.5 py-0.5 text-xs tabular-nums">
             {pendingCount} unsaved {pendingCount === 1 ? "change" : "changes"}
           </span>
-          {upload.isPending ? <span className="text-xs text-slate-400">Uploading...</span> : null}
+          {upload.isPending ? <span className="text-xs text-neutral-400">Uploading...</span> : null}
           {notice ? (
-            <span className={`max-w-64 truncate text-xs ${/failed|error|too|not/i.test(notice) ? "text-red-400" : "text-emerald-400"}`}>
+            <span className={`max-w-64 truncate text-xs ${/failed|error|too|not/i.test(notice) ? "text-[#ff9a9a]" : "text-[#7ddbb0]"}`}>
               {notice}
             </span>
           ) : null}
           <button
             onClick={() => save.mutate()}
             disabled={!canSave}
-            className="rounded-lg bg-indigo-500 px-3 py-1.5 font-semibold hover:bg-indigo-400 disabled:opacity-40"
+            className="rounded-full bg-sun px-4 py-1.5 font-semibold text-ink hover:bg-white disabled:opacity-40"
           >
             {save.isPending ? "Saving..." : "Save all"}
           </button>
           <button
             onClick={discard}
             disabled={pendingCount === 0 || save.isPending}
-            className="rounded-lg bg-slate-700 px-3 py-1.5 hover:bg-slate-600 disabled:opacity-40"
+            className="rounded-full bg-white/10 px-4 py-1.5 hover:bg-white/20 disabled:opacity-40"
           >
             Discard
           </button>
-          <Link href={`/admin/pages/${pageId}`} className="text-slate-400 hover:text-slate-200">Editor</Link>
-          <a href={route} className="text-slate-400 hover:text-slate-200">Exit</a>
+          <Link href={`/admin/pages/${pageId}`} className="text-neutral-400 hover:text-neutral-200">Editor</Link>
+          <a href={route} className="text-neutral-400 hover:text-neutral-200">Exit</a>
         </div>
       </div>
     </>

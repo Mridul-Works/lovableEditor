@@ -22,6 +22,30 @@ function camelAttr(name: string) {
 }
 
 /**
+ * lucide exports every icon under aliases too — `ImageIcon`, `LucideImage`,
+ * `XIcon` — and dropped its brand icons (Instagram, Linkedin, Youtube, Twitter,
+ * Facebook, Github, ...) in v1. Lovable projects still import both, so the
+ * lookup tries the alias spellings and falls back to the last release that
+ * shipped the brand set.
+ */
+async function readIconSvg(componentName: string): Promise<string | null> {
+  const candidates = [componentName];
+  if (/Icon$/.test(componentName) && componentName.length > 4) candidates.push(componentName.replace(/Icon$/, ""));
+  if (/^Lucide[A-Z]/.test(componentName)) candidates.push(componentName.replace(/^Lucide/, ""));
+  for (const pkg of ["lucide-static", "lucide-static-legacy"]) {
+    for (const name of candidates) {
+      const file = path.join(process.cwd(), "node_modules", pkg, "icons", `${kebab(name)}.svg`);
+      try {
+        return await readFile(file, "utf8");
+      } catch {
+        // try the next spelling / package
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * Minimal XML element parser sufficient for lucide-static's machine-generated
  * SVGs (flat, double-quoted attributes, no comments/CDATA/text content).
  */
@@ -57,13 +81,8 @@ export async function lucideIconNode(
   componentName: string,
   extraProps: Record<string, string | number>,
 ): Promise<ElementNode | null> {
-  const file = path.join(process.cwd(), "node_modules", "lucide-static", "icons", `${kebab(componentName)}.svg`);
-  let svg: string;
-  try {
-    svg = await readFile(file, "utf8");
-  } catch {
-    return null;
-  }
+  const svg = await readIconSvg(componentName);
+  if (svg === null) return null;
   const node = parseSvg(svg);
   if (!node || node.tag !== "svg") return null;
 

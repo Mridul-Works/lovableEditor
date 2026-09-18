@@ -22,30 +22,30 @@ export const PreviewPane = forwardRef<
   const src = `${route}${route.includes("?") ? "&" : "?"}preview=1`;
 
   return (
-    <div className="flex h-full min-w-0 flex-col bg-slate-200/70">
-      <div className="flex items-center gap-2 border-b border-slate-200 bg-white px-3 py-2 text-xs">
-        <span className="font-semibold text-slate-700">Live preview</span>
+    <div className="flex h-full min-w-0 flex-col bg-neutral-200/70">
+      <div className="flex items-center gap-2 border-b border-neutral-200 bg-white px-3 py-2 text-xs">
+        <span className="whitespace-nowrap font-semibold text-neutral-700">Live preview</span>
         <span
-          className={`h-2 w-2 rounded-full ${ready ? "bg-emerald-500" : "bg-slate-300"}`}
+          className={`h-2 w-2 rounded-full ${ready ? "bg-leaf" : "bg-neutral-300"}`}
           title={ready ? "Connected — edits show instantly" : "Loading page..."}
         />
-        <div className="ml-3 flex overflow-hidden rounded-lg border border-slate-300">
+        <div className="ml-3 flex overflow-hidden rounded-lg border border-neutral-300">
           {DEVICES.map((d) => (
             <button
               key={d.id}
               type="button"
               onClick={() => setDevice(d.id)}
-              className={`px-3 py-1 font-medium ${device === d.id ? "bg-slate-900 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}
+              className={`whitespace-nowrap px-3 py-1 font-medium ${device === d.id ? "bg-neutral-900 text-white" : "bg-white text-neutral-600 hover:bg-neutral-50"}`}
             >
               {d.label}
             </button>
           ))}
         </div>
-        <span className="text-slate-400">Click anything on the page to jump to its field.</span>
+        <span className="hidden min-w-0 truncate text-neutral-400 2xl:inline">Click anything on the page to jump to its field.</span>
         <button
           type="button"
           onClick={onReload}
-          className="ml-auto rounded-lg border border-slate-300 px-3 py-1 font-medium text-slate-600 hover:bg-slate-50"
+          className="ml-auto whitespace-nowrap rounded-full border border-neutral-300 px-3 py-1 font-medium text-neutral-600 hover:bg-neutral-50"
         >
           Reload
         </button>
@@ -53,14 +53,14 @@ export const PreviewPane = forwardRef<
           href={`${route}${route.includes("?") ? "&" : "?"}edit=1`}
           target="_blank"
           rel="noreferrer"
-          className="rounded-lg border border-slate-300 px-3 py-1 font-medium text-slate-600 hover:bg-slate-50"
+          className="whitespace-nowrap rounded-full border border-neutral-300 px-3 py-1 font-medium text-neutral-600 hover:bg-neutral-50"
         >
           Edit on page ↗
         </a>
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-3">
         <div
-          className="mx-auto h-full overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-slate-300 transition-[width] duration-200"
+          className="mx-auto h-full overflow-hidden rounded-2xl bg-white shadow-lg ring-1 ring-neutral-300 transition-[width] duration-200"
           style={{ width: width ? `${width}px` : "100%", maxWidth: "100%" }}
         >
           <iframe

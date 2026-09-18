@@ -5,6 +5,8 @@ import { RenderTree } from "@/components/RenderTree";
 import { EditOverlay } from "@/components/EditOverlay";
 import { PreviewBridge } from "@/components/PreviewBridge";
 import { QueryProvider } from "@/lib/query-client";
+import { BrandFonts } from "@/components/admin/BrandFonts";
+import { Squiggle } from "@/components/admin/PageTitle";
 import { getSession } from "@/lib/auth";
 import {
   PAGE_STATUS,
@@ -64,7 +66,7 @@ export default async function SitePage({ params, searchParams }: Props) {
       ) : null}
 
       {session && !previewMode && page.status !== PAGE_STATUS.PUBLISHED ? (
-        <div className="sticky top-0 z-50 flex items-center justify-center gap-3 bg-amber-400 px-4 py-2 text-sm font-semibold text-amber-950">
+        <div className="sticky top-0 z-50 flex items-center justify-center gap-3 bg-sun px-4 py-2 font-brand text-sm font-medium text-ink">
           Draft — only admins can see this page.
           <Link href={`/admin/pages/${page.id}`} className="underline">Open in editor</Link>
         </div>
@@ -84,17 +86,26 @@ export default async function SitePage({ params, searchParams }: Props) {
 
 function WelcomePage({ isAdmin }: { isAdmin: boolean }) {
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-6 bg-slate-950 px-6 text-center text-slate-50">
-      <h1 className="text-4xl font-bold tracking-tight">LovableEditor</h1>
-      <p className="max-w-md text-slate-400">
-        No page has been imported at <code className="rounded bg-slate-800 px-1.5 py-0.5">/</code> yet.
-        Import a page from Lovable to publish it here.
+    <main className="admin-ui flex min-h-screen flex-col items-center justify-center gap-6 bg-ink px-6 text-center text-white">
+      <BrandFonts />
+      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-neutral-500">masters&rsquo; union page editor</p>
+      <h1 className="text-5xl font-light tracking-tight md:text-6xl">
+        Nothing is{" "}
+        <span className="relative inline-block font-accent italic">
+          published
+          <Squiggle className="absolute -bottom-2 left-0 h-3 w-full" />
+        </span>{" "}
+        here yet
+      </h1>
+      <p className="max-w-md text-sm text-neutral-400">
+        No page has been imported at <code className="rounded bg-white/10 px-1.5 py-0.5">/</code>. Sync a Lovable
+        project and its home page appears here.
       </p>
       <Link
-        href={isAdmin ? "/admin/import" : "/admin/login"}
-        className="rounded-lg bg-slate-50 px-5 py-2.5 font-semibold text-slate-950 hover:bg-slate-200"
+        href={isAdmin ? "/admin/projects" : "/admin/login"}
+        className="rounded-full bg-white px-6 py-3 text-sm font-medium text-ink transition-colors hover:bg-sun"
       >
-        {isAdmin ? "Import a page" : "Admin login"}
+        {isAdmin ? "Open Lovable projects" : "Sign in"}
       </Link>
     </main>
   );

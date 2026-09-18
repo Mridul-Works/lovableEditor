@@ -279,6 +279,15 @@ export async function bundlePageFromRepo(
   if (themeCss) {
     for (const [p, url] of publicUrlMap) themeCss = themeCss.split(p).join(url);
   }
+  // `bg-[url('/pattern.svg')]` and `src="/lovable-uploads/x.png"` live in the
+  // components themselves; those paths have no file behind them on this host.
+  if (publicUrlMap.size > 0) {
+    for (const [file, content] of sources) {
+      let next = content;
+      for (const [p, url] of publicUrlMap) next = next.split(`"${p}"`).join(`"${url}"`).split(`'${p}'`).join(`'${url}'`).split(`(${p})`).join(`(${url})`);
+      if (next !== content) sources.set(file, next);
+    }
+  }
 
   // Custom design tokens (colors, gradients, shadows, animations) live in
   // tailwind.config — Tailwind v4 projects have none and use @theme in CSS.

@@ -16,8 +16,8 @@ export default async function RepoDetailPage({
   const token = await getGithubToken();
   if (!token) {
     return (
-      <p className="text-sm text-slate-500">
-        GitHub is not connected. <Link href="/admin/projects" className="text-indigo-600 underline">Connect it first.</Link>
+      <p className="text-sm text-neutral-500">
+        GitHub is not connected. <Link href="/admin/projects" className="text-leaf underline">Connect it first.</Link>
       </p>
     );
   }
@@ -45,24 +45,24 @@ export default async function RepoDetailPage({
   return (
     <div className="max-w-3xl">
       <div className="mb-6">
-        <Link href="/admin/projects" className="text-sm text-slate-500 hover:underline">← All projects</Link>
+        <Link href="/admin/projects" className="text-sm text-neutral-500 hover:underline">← All projects</Link>
         <h1 className="mt-1 text-2xl font-bold">
-          {owner}/<span className="text-indigo-700">{repo}</span>
+          {owner}/<span className="text-leaf">{repo}</span>
         </h1>
-        <p className="mt-0.5 text-sm text-slate-500">
-          Branch: <code className="rounded bg-slate-100 px-1">{branch || "?"}</code>
+        <p className="mt-0.5 text-sm text-neutral-500">
+          Branch: <code className="rounded bg-neutral-100 px-1">{branch || "?"}</code>
           {head ? (
             <>
-              {" "}· latest push <code className="rounded bg-slate-100 px-1">{head.slice(0, 7)}</code>
+              {" "}· latest push <code className="rounded bg-neutral-100 px-1">{head.slice(0, 7)}</code>
             </>
           ) : null}
         </p>
       </div>
 
       {error ? (
-        <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>
+        <p className="rounded-xl bg-alert/10 px-4 py-3 text-sm text-alert">{error}</p>
       ) : pageFiles.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">
+        <div className="rounded-2xl border border-dashed border-neutral-300 bg-white p-10 text-center text-sm text-neutral-500">
           No page files found (looked for <code>src/pages/*.tsx</code>, <code>src/routes/*.tsx</code>{" "}
           and <code>src/App.tsx</code>). This doesn&apos;t look like a Lovable project export.
         </div>
