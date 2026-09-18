@@ -15,7 +15,7 @@ export function RepoPageRow({
   repo: string;
   pagePath: string;
   suggestedRoute: string;
-  imported: { id: string; route: string; status: string } | null;
+  imported: { id: string; route: string; status: string; upToDate: boolean } | null;
 }) {
   const [state, formAction, pending] = useActionState<GithubImportState, FormData>(
     importFromGithubAction,
@@ -23,7 +23,7 @@ export function RepoPageRow({
   );
 
   const done = state.pageId ? state : null;
-  const current = done ? { id: done.pageId!, route: done.route!, status: "" } : imported;
+  const current = done ? { id: done.pageId!, route: done.route!, status: "", upToDate: true } : imported;
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4">
@@ -33,6 +33,16 @@ export function RepoPageRow({
           <>
             <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
               imported → {current.route}
+            </span>
+            <span
+              className={
+                current.upToDate
+                  ? "rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500"
+                  : "rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700"
+              }
+              title={current.upToDate ? "Synced at the latest push" : "GitHub has newer commits than this page's last sync"}
+            >
+              {current.upToDate ? "up to date" : "behind GitHub"}
             </span>
             <span className="ml-auto flex items-center gap-3 text-xs font-medium">
               <Link href={`/admin/pages/${current.id}`} className="text-indigo-600 hover:underline">Open editor</Link>
@@ -68,7 +78,8 @@ export function RepoPageRow({
         <div className="mt-3 rounded-lg bg-emerald-50 px-4 py-3 text-xs text-emerald-900">
           <p className="font-semibold">
             {done.reimported ? "Synced" : "Imported"} → {done.route} · {done.report.textFields} text fields ·{" "}
-            {done.report.imageFields} images · {done.filesBundled} files bundled · {done.assetsUploaded} assets uploaded
+            {done.report.imageFields} images · {done.report.linkFields ?? 0} links · {done.filesBundled} files bundled ·{" "}
+            {done.assetsUploaded} assets uploaded
             {done.report.merge
               ? ` · kept ${done.report.merge.kept} / added ${done.report.merge.added} / orphaned ${done.report.merge.orphaned}`
               : ""}

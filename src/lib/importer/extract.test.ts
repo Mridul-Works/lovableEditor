@@ -310,3 +310,476 @@ test("event handlers and script tags never reach the tree", async () => {
   assert.ok(!Object.keys(button.props).some((k) => /^on[A-Z]/.test(k)));
   assert.ok(result.report.strippedHandlers.includes("onClick"));
 });
+
+// --------------------------------------------------------------------------
+// assets, links and media become fields
+// --------------------------------------------------------------------------
+
+test("asset imports resolve through data arrays and object properties", async () => {
+  const assetUrls = new Map([
+    ["@/assets/location-mumbai.jpg", "/uploads/aa-mumbai.jpg"],
+    ["@/assets/location-delhi.jpg", "/uploads/bb-delhi.jpg"],
+  ]);
+  const result = await extractPage(`
+    import mumbai from "@/assets/location-mumbai.jpg";
+    import delhi from "@/assets/location-delhi.jpg";
+    const LOCATIONS = [{ name: "Mumbai", image: mumbai }, { name: "Delhi", image: delhi }];
+    export default function Page() {
+      return (
+        <main>
+          {LOCATIONS.map((l) => <img key={l.name} src={l.image} alt={l.name} />)}
+        </main>
+      );
+    }
+  `, { assetUrls });
+  const srcs = result.fields.filter((f) => f.type === "IMAGE").map((f) => f.defaultValue);
+  assert.deepEqual(srcs, ["/uploads/aa-mumbai.jpg", "/uploads/bb-delhi.jpg"]);
+  assert.ok(!result.report.notes.some((n) => /placeholder/.test(n)), result.report.notes.join("\n"));
+});
+
+test("Lovable sidecar imports behave like { url } objects", async () => {
+  const assetUrls = new Map([
+    ["@/assets/logo-2.png.asset.json", "/uploads/cc-logo-2.png"],
+    ["@/assets/campusFilm.mp4.asset.json", "https://p.lovableproject.com/__l5e/assets-v1/x/campusFilm.mp4"],
+  ]);
+  const result = await extractPage(`
+    import logoAsset from "@/assets/logo-2.png.asset.json";
+    import campusVideo from "@/assets/campusFilm.mp4.asset.json";
+    const FACULTY = [{ name: "A", img: logoAsset.url }];
+    export default function Page() {
+      return (
+        <main>
+          <img src={logoAsset.url} alt="Logo" />
+          {FACULTY.map((f) => <img key={f.name} src={f.img} alt={f.name} />)}
+          <div style={{ backgroundImage: \`url(\${logoAsset.url})\` }} />
+          <video src={campusVideo.url} playsInline />
+        </main>
+      );
+    }
+  `, { assetUrls });
+  const images = result.fields.filter((f) => f.type === "IMAGE");
+  assert.equal(images.length, 3);
+  assert.ok(images.every((f) => f.defaultValue === "/uploads/cc-logo-2.png"), JSON.stringify(images));
+  const [video] = result.fields.filter((f) => f.type === "VIDEO");
+  assert.ok(video);
+  assert.match(video.defaultValue, /campusFilm\.mp4$/);
+  assert.equal(result.report.videoFields, 1);
+  const [videoEl] = tags(result, "video");
+  assert.deepEqual(videoEl.props.src, { $f: video.key });
+});
+
+test("an asset the bundler could not fetch keeps an editable placeholder slot", async () => {
+  const result = await extractPage(`
+    import hero from "@/assets/hero.webp";
+    export default function Page() { return <main><img src={hero} alt="Hero" /></main>; }
+  `);
+  const [img] = result.fields.filter((f) => f.type === "IMAGE");
+  assert.ok(img.defaultValue.startsWith("data:image/svg+xml"));
+  assert.ok(result.report.notes.some((n) => /hero\.webp/.test(n)));
+});
+
+test("link targets become LINK fields and <source> follows its parent", async () => {
+  const result = await extractPage(`
+    export default function Page() {
+      return (
+        <main>
+          <a href="https://example.com/brochure.pdf">Brochure</a>
+          <Link to="/apply">Apply</Link>
+          <picture><source srcSet="x" src="/a.webp" /><img src="/a.jpg" alt="" /></picture>
+          <video><source src="/clip.mp4" type="video/mp4" /></video>
+        </main>
+      );
+    }
+  `);
+  const links = result.fields.filter((f) => f.type === "LINK");
+  assert.deepEqual(links.map((l) => l.defaultValue), ["https://example.com/brochure.pdf", "/apply"]);
+  assert.equal(result.report.linkFields, 2);
+  const anchors = tags(result, "a");
+  assert.deepEqual(anchors[0].props.href, { $f: links[0].key });
+  assert.deepEqual(anchors[1].props.href, { $f: links[1].key });
+  const sources = tags(result, "source");
+  const byKey = new Map(result.fields.map((f) => [f.key, f]));
+  const typeOf = (node: ElementNode) => byKey.get((node.props.src as { $f: string }).$f)?.type;
+  assert.equal(typeOf(sources[0]), "IMAGE");
+  assert.equal(typeOf(sources[1]), "VIDEO");
+});
+
+test("?? and .find() resolve the way the runtime would", async () => {
+  const result = await extractPage(`
+    import { useState } from "react";
+    const PATHWAYS = [
+      { key: "school", headline: "Still in school", image: "/a.jpg" },
+      { key: "work", headline: "Already working", image: "/b.jpg" },
+    ];
+    export default function Page() {
+      const [activeKey] = useState("work");
+      const active = PATHWAYS.find((p) => p.key === activeKey) ?? PATHWAYS[0];
+      const fallback = undefinedThing || PATHWAYS.at(-1);
+      return <main><h1>{active.headline}</h1><img src={active.image} alt="" /><p>{fallback.headline}</p></main>;
+    }
+  `);
+  assert.match(text(result), /Already working/);
+  const [img] = result.fields.filter((f) => f.type === "IMAGE");
+  assert.equal(img.defaultValue, "/b.jpg");
+  assert.equal(result.fields.filter((f) => f.section !== "meta" && f.defaultValue === "Already working").length, 2);
+});
+
+test("a wrapper component holding the sections names fields after its children", async () => {
+  const result = await extractPage(`
+    function StackReveal({ children }) { return <div className="stack">{children}</div>; }
+    function Hero() { return <section><h1>Hero title</h1></section>; }
+    function Stats() { return <section><p>Stats copy</p></section>; }
+    function Gallery() { return <section><p>Gallery copy</p></section>; }
+    export default function Page() {
+      return (
+        <main>
+          <header><a href="/">Logo</a></header>
+          <StackReveal><Hero /><Stats /><Gallery /></StackReveal>
+        </main>
+      );
+    }
+  `);
+  const sectionOf = (value: string) =>
+    result.fields.find((f) => f.section !== "meta" && f.defaultValue === value)?.section;
+  assert.equal(sectionOf("Hero title"), "hero");
+  assert.equal(sectionOf("Stats copy"), "stats");
+  assert.equal(sectionOf("Gallery copy"), "gallery");
+  assert.equal(sectionOf("Logo"), "header");
+  // The wrapper still renders around its children.
+  assert.equal(tags(result, "div").filter((d) => d.props.className === "stack").length, 1);
+});
+
+test("nested wrappers and childless section components are split into their sections", async () => {
+  const result = await extractPage(`
+    function TenThings() { return <section id="ten-things"><h2>Ten things</h2></section>; }
+    function HomeSections() {
+      return (
+        <>
+          <section className="pricing"><h2>Pricing</h2></section>
+          <section className="faq"><h2>FAQ</h2></section>
+          <footer><p>Footer text</p></footer>
+        </>
+      );
+    }
+    export default function Page() {
+      return (
+        <main>
+          <div id="hero-curtain" className="relative">
+            <section className="hero"><h1>Hero title</h1></section>
+            <div className="relative z-10"><TenThings /><HomeSections /></div>
+          </div>
+        </main>
+      );
+    }
+  `);
+  const sectionOf = (value: string) =>
+    result.fields.find((f) => f.section !== "meta" && f.defaultValue === value)?.section;
+  assert.equal(sectionOf("Hero title"), "hero");
+  assert.equal(sectionOf("Ten things"), "ten-things");
+  assert.equal(sectionOf("Pricing"), "pricing");
+  assert.equal(sectionOf("FAQ"), "faq");
+  assert.equal(sectionOf("Footer text"), "footer");
+});
+
+// --------------------------------------------------------------------------
+// component-local state and the idioms built on it
+// --------------------------------------------------------------------------
+
+test("each component's own state and locals win over another component's", async () => {
+  const result = await extractPage(`
+    import { useState } from "react";
+    const VIDEOS = [{ thumb: "/v1.jpg", title: "One" }, { thumb: "/v2.jpg", title: "Two" }];
+    function Nav() {
+      const [active, setActive] = useState<string | null>(null);
+      const current = "nav";
+      return <nav>{current}</nav>;
+    }
+    function Videos() {
+      const [active, setActive] = useState(0);
+      const current = VIDEOS[active];
+      return <section><img src={current.thumb} alt={current.title} /></section>;
+    }
+    export default function Page() { return <main><Nav /><Videos /></main>; }
+  `);
+  const [img] = result.fields.filter((f) => f.type === "IMAGE");
+  assert.equal(img.defaultValue, "/v1.jpg");
+  assert.match(text(result), /nav/);
+});
+
+test("Math.min, optional chaining and data-active on the selected group resolve", async () => {
+  const result = await extractPage(`
+    import { useState } from "react";
+    const GROUPS = [{ label: "Industry", items: ["a"] }, { label: "Full-time", items: ["b"] }];
+    export default function Page() {
+      const [stage] = useState(0);
+      const active = GROUPS[Math.min(stage, GROUPS.length - 1)];
+      return (
+        <main>
+          {GROUPS.map((g) => (
+            <div key={g.label} data-active={g.label === active?.label ? "true" : undefined}>{g.label}</div>
+          ))}
+        </main>
+      );
+    }
+  `);
+  const divs = tags(result, "div");
+  assert.equal(divs[0].props["data-active"], "true");
+  assert.equal(divs[1].props["data-active"], undefined);
+});
+
+test("a for-loop that chunks a list into pages is expanded", async () => {
+  const result = await extractPage(`
+    import { useState } from "react";
+    const PEOPLE = [{ n: "A", cat: "x" }, { n: "B", cat: "y" }, { n: "C", cat: "x" }, { n: "D", cat: "y" }, { n: "E", cat: "x" }];
+    function Pager({ items }) {
+      const [page, setPage] = useState(0);
+      const PER_PAGE = 2;
+      const pages: typeof PEOPLE[] = [];
+      for (let i = 0; i < items.length; i += PER_PAGE) pages.push(items.slice(i, i + PER_PAGE));
+      return <div>{pages.map((p, pi) => <ul key={pi}>{p.map((x) => <li key={x.n}>{x.n}</li>)}</ul>)}</div>;
+    }
+    export default function Page() {
+      const [active] = useState("x");
+      const visible = active === "All" ? PEOPLE : PEOPLE.filter((p) => p.cat === active);
+      return <main><Pager key={active} items={visible} /></main>;
+    }
+  `);
+  // The filter runs statically (active is "x"), leaving A, C, E in pages of two.
+  assert.equal(tags(result, "ul").length, 2);
+  assert.equal(tags(result, "li").length, 3);
+  assert.match(text(result), /A C E/);
+});
+
+test("a scroll deck with a runway and stacked panels is laid out as a sequence", async () => {
+  const result = await extractPage(`
+    export default function Page() {
+      return (
+        <main>
+          <section id="journey" className="relative" style={{ height: "340vh" }}>
+            <div className="sticky top-0 h-screen w-full overflow-hidden bg-neutral-100">
+              <div className="absolute inset-0 flex items-center will-change-transform"><h2>Semester 01</h2></div>
+              <div className="absolute inset-0 flex items-center will-change-transform"><h2>Semester 02</h2></div>
+            </div>
+          </section>
+        </main>
+      );
+    }
+  `);
+  const [section] = tags(result, "section");
+  assert.equal(section.props.style, undefined);
+  const sticky = section.children[0] as ElementNode;
+  assert.equal(sticky.props.className, "w-full bg-neutral-100");
+  for (const panel of sticky.children as ElementNode[]) {
+    assert.equal(panel.props.className, "flex items-center");
+  }
+  assert.ok(result.report.notes.some((n) => /scroll-driven deck/.test(n)));
+});
+
+test("a gallery built from a JSON table, a glob map and a helper resolves its photos", async () => {
+  const result = await extractPage(`
+    import { useState } from "react";
+    const assetModules = ({ "/src/assets/mm/000-image.webp.asset.json": { "url": "/uploads/a.webp" } });
+    function assetUrl(filename) {
+      if (!filename) return "";
+      return assetModules[\`/src/assets/mm/\${filename}.asset.json\`]?.url ?? "";
+    }
+    const CATEGORIES = ["Board", "Faculty"];
+    const raw = { "Board": [{ name: "Ann", imageAsset: "000-image.webp" }], "Faculty": [{ name: "Bob", imageAsset: "missing.webp" }] };
+    const masters = raw as Record<string, any>;
+    export const TABLE = Object.fromEntries(
+      CATEGORIES.map((c) => [c, masters[c].map((m) => ({ name: m.name, image: assetUrl(m.imageAsset) }))]),
+    ) as Record<string, any>;
+    function Section({ category }) {
+      const [expanded] = useState(false);
+      const cards = TABLE[category];
+      return <section>{(expanded ? cards : cards.slice(0, 3)).map((m) => <img key={m.name} src={m.image} alt={m.name} />)}</section>;
+    }
+    export default function Page() { return <main>{CATEGORIES.map((c) => <Section key={c} category={c} />)}</main>; }
+  `);
+  const imgs = result.fields.filter((f) => f.type === "IMAGE").map((f) => f.defaultValue);
+  assert.equal(imgs.length, 2);
+  assert.equal(imgs[0], "/uploads/a.webp");
+  assert.ok(imgs[1].startsWith("data:"), "an unmatched photo stays an editable placeholder");
+});
+
+test("missing properties are falsy, filters run statically, and body-local helpers are callable", async () => {
+  const result = await extractPage(`
+    import { useState } from "react";
+    const PEOPLE = [{ n: "A", img: "/a.jpg", cat: "x" }, { n: "B", cat: "y" }, { n: "C", img: "/c.jpg", cat: "x" }];
+    export default function Page() {
+      const [active] = useState("x");
+      const ytThumb = (id) => \`https://img.youtube.com/vi/\${id}/hqdefault.jpg\`;
+      const withPhotos = PEOPLE.filter((p) => Boolean(p.img));
+      const visible = withPhotos.filter((p) => p.cat === active);
+      return (
+        <main>
+          {PEOPLE.map((p) => (p.img ? <img key={p.n} src={p.img} alt={p.n} /> : <span key={p.n} className="initials">{p.n}</span>))}
+          <ul>{visible.map((p) => <li key={p.n}>{p.n}</li>)}</ul>
+          <img src={ytThumb("abc")} alt="thumb" />
+        </main>
+      );
+    }
+  `);
+  assert.equal(tags(result, "span").filter((s) => s.props.className === "initials").length, 1);
+  assert.equal(tags(result, "li").length, 2);
+  const imgs = result.fields.filter((f) => f.type === "IMAGE").map((f) => f.defaultValue);
+  assert.deepEqual(imgs, ["/a.jpg", "/c.jpg", "https://img.youtube.com/vi/abc/hqdefault.jpg"]);
+});
+
+// --------------------------------------------------------------------------
+// whole-project imports: aliases, memoised lists, aggregates, DOM hygiene
+// --------------------------------------------------------------------------
+
+test("import aliases resolve per file, even when two files reuse the alias", async () => {
+  const result = await extractPage(`
+// ===== src/lib/content.ts =====
+export const pgpOutClass = { title: "OutClass title" };
+export const pgpImmersions = { title: "Immersions title" };
+
+// ===== src/components/PgOutClass.tsx =====
+import { pgpOutClass as data } from "@/lib/content";
+export function PgOutClass() { return <section><h2>{data.title}</h2></section>; }
+
+// ===== src/components/PgImmersions.tsx =====
+import { pgpImmersions as data } from "@/lib/content";
+export function PgImmersions() { return <section><h2>{data.title}</h2></section>; }
+
+// ===== src/routes/page.tsx (page) =====
+import { PgOutClass } from "@/components/PgOutClass";
+import { PgImmersions } from "@/components/PgImmersions";
+export default function Page() { return <main><PgOutClass /><PgImmersions /></main>; }
+  `);
+  const headings = tags(result, "h2").map((h) => textOf([h], result.fields));
+  assert.deepEqual(headings, ["OutClass title", "Immersions title"]);
+});
+
+test("a useMemo'd filtered list, reduce totals and Set sizes resolve", async () => {
+  const result = await extractPage(`
+    import { useMemo, useState } from "react";
+    const PARTNERS = [
+      { name: "IIT", country: "USA", pathways: [{ kind: "exchange", audiences: ["ug"] }, { kind: "transfer", audiences: ["all"] }] },
+      { name: "Griffith", country: "Australia", pathways: [{ kind: "transfer", audiences: ["pg"] }] },
+      { name: "IENYC", country: "USA", pathways: [] },
+    ];
+    function matches(p, audience) { return p.audiences.includes("all") || p.audiences.includes(audience); }
+    export default function Page() {
+      const [audience] = useState("any");
+      const [kind] = useState("any");
+      const filtered = useMemo(() => {
+        return PARTNERS.map((partner) => ({
+          partner,
+          pathways: partner.pathways.filter((p) => {
+            const audienceOk = audience === "any" ? true : matches(p, audience);
+            const kindOk = kind === "any" || p.kind === kind;
+            return audienceOk && kindOk;
+          }),
+        })).filter((row) => row.pathways.length > 0);
+      }, [audience, kind]);
+      const total = filtered.reduce((n, r) => n + r.pathways.length, 0);
+      const countries = new Set(filtered.map((r) => r.partner.country));
+      return (
+        <main>
+          <p className="total">{total}</p>
+          <p className="countries">{countries.size}</p>
+          <p className="all">{String(new Set(PARTNERS.map((p) => p.country)).size)}</p>
+          {filtered.length === 0 ? <div className="empty">No match</div> : filtered.map((r) => <h3 key={r.partner.name}>{r.partner.name}</h3>)}
+          <span className="joined">{["a", "", "b"].filter(Boolean).join(" · ")}</span>
+        </main>
+      );
+    }
+  `);
+  const byClass = (cls: string) => textOf(elements(result.tree).filter((e) => e.props.className === cls), result.fields);
+  assert.equal(byClass("total"), "3");
+  assert.equal(byClass("countries"), "2");
+  assert.equal(byClass("all"), "2");
+  assert.equal(byClass("joined"), "a · b");
+  assert.deepEqual(tags(result, "h3").map((h) => textOf([h], result.fields)), ["IIT", "Griffith"]);
+  assert.equal(elements(result.tree).filter((e) => e.props.className === "empty").length, 0);
+});
+
+test("controlled inputs become uncontrolled and component-only props stay off the DOM", async () => {
+  const result = await extractPage(`
+    import { useState } from "react";
+    export default function Page() {
+      const [kind] = useState("any");
+      return (
+        <main>
+          <select value={kind}><option value="any">Any</option></select>
+          <input type="checkbox" checked={true} />
+          <Accordion type="single" collapsible className="acc"><p>Body</p></Accordion>
+          <Dialog><DialogContent><p>Modal body</p></DialogContent></Dialog>
+        </main>
+      );
+    }
+  `);
+  const [select] = tags(result, "select");
+  assert.equal(select.props.value, undefined);
+  assert.equal(select.props.defaultValue, "any");
+  const [input] = tags(result, "input");
+  assert.equal(input.props.checked, undefined);
+  assert.equal(input.props.defaultChecked, true);
+  const acc = elements(result.tree).find((e) => e.props.className === "acc");
+  assert.ok(acc);
+  assert.deepEqual(Object.keys(acc.props), ["className"]);
+  assert.doesNotMatch(text(result), /Modal body/);
+});
+
+test("a logo table built from a glob map with entries, split, pop and replace resolves", async () => {
+  const result = await extractPage(`
+    const logoModules = ({
+      "../assets/recruiter-logos/McKinsey.png.asset.json": { default: { "url": "/uploads/mck.png" } },
+      "../assets/recruiter-logos/Bain.png.asset.json": { default: { "url": "/uploads/bain.png" } },
+    });
+    const LOGOS: Record<string, string> = Object.fromEntries(
+      Object.entries(logoModules).map(([path, mod]) => [
+        path.split("/").pop()!.replace(".png.asset.json", ""),
+        mod.default.url,
+      ]),
+    );
+    function LogoRow({ names }: { names: string[] }) {
+      const found = names.filter((n) => LOGOS[n]);
+      if (found.length === 0) return null;
+      return <div>{found.map((n) => <img key={n} src={LOGOS[n]} alt={n} />)}</div>;
+    }
+    export default function Page() {
+      const video = "https://youtu.be/abc123?si=xyz";
+      return (
+        <main>
+          <LogoRow names={["McKinsey", "Nobody", "Bain"]} />
+          <img src={\`https://img.youtube.com/vi/\${(video as string).split("/").pop()?.split("?")[0]}/hqdefault.jpg\`} alt="thumb" />
+        </main>
+      );
+    }
+  `);
+  const imgs = result.fields.filter((f) => f.type === "IMAGE").map((f) => f.defaultValue);
+  assert.deepEqual(imgs, ["/uploads/mck.png", "/uploads/bain.png", "https://img.youtube.com/vi/abc123/hqdefault.jpg"]);
+});
+
+test("helper guard clauses run in order, and an unset env token means 'no logo', not a placeholder", async () => {
+  const result = await extractPage(`
+    const TOKEN = import.meta.env["VITE_LOGO_KEY"] as string | undefined;
+    const STATIC_LOGOS: Record<string, string> = { harvard: "/uploads/harvard.webp", "iim calcutta": "/uploads/iimc.webp" };
+    const STATIC_KEYS = Object.keys(STATIC_LOGOS).sort((a, b) => b.length - a.length);
+    export function orgLogoUrl(org?: string, size = 128): string | undefined {
+      if (!org) return undefined;
+      const hay = org.toLowerCase();
+      const staticKey = STATIC_KEYS.find((k) => hay.includes(k));
+      if (staticKey) return STATIC_LOGOS[staticKey];
+      if (!TOKEN) return undefined;
+      return \`https://img.logo.dev/x?token=\${TOKEN}&size=\${size}\`;
+    }
+    function OrgLogo({ org }: { org: string }) {
+      const url = orgLogoUrl(org, 128);
+      const showLogo = Boolean(url);
+      return <div>{showLogo ? <img src={url} alt={org} /> : <span className="wordmark">{org}</span>}</div>;
+    }
+    export default function Page() {
+      return <main><OrgLogo org="Harvard Business School" /><OrgLogo org="Acme Robotics" /></main>;
+    }
+  `);
+  const imgs = result.fields.filter((f) => f.type === "IMAGE").map((f) => f.defaultValue);
+  assert.deepEqual(imgs, ["/uploads/harvard.webp"]);
+  const marks = elements(result.tree).filter((e) => e.props.className === "wordmark");
+  assert.equal(marks.length, 1);
+  assert.equal(textOf(marks, result.fields), "Acme Robotics");
+});

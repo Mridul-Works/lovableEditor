@@ -12,7 +12,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { chromium } from "playwright";
 import "dotenv/config";
 
-const BASE = process.env.BASE_URL ?? "http://localhost:3000";
+const BASE = process.env.BASE_URL ?? "http://localhost:4000";
 const OWN_SERVER = !process.env.BASE_URL;
 
 let failures = 0;

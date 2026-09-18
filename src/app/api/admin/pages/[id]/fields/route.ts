@@ -1,23 +1,25 @@
-import { notFound } from "next/navigation";
+import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { getSession } from "@/lib/auth";
 import type { PageFieldsResponse } from "@/lib/editor-types";
 import { isFieldType } from "@/lib/tree";
-import { PageEditor } from "@/components/admin/editor/PageEditor";
+
+// Field data for the admin editor. The page component seeds the editor's
+// query cache with the same shape, and TanStack Query refetches from here
+// after every save so what the admin sees is what the database holds.
 
 export const dynamic = "force-dynamic";
 
-// The editor is seeded with the same payload its JSON route returns, so the
-// first paint needs no client fetch and later refetches replace it in place.
-
-export default async function PageEditorRoute({ params }: { params: Promise<{ id: string }> }) {
+export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+  if (!(await getSession())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { id } = await params;
   const page = await db.page.findUnique({
     where: { id },
     include: { fields: { orderBy: { sortOrder: "asc" } } },
   });
-  if (!page) notFound();
+  if (!page) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const initial: PageFieldsResponse = {
+  const body: PageFieldsResponse = {
     page: {
       id: page.id,
       route: page.route,
@@ -38,6 +40,5 @@ export default async function PageEditorRoute({ params }: { params: Promise<{ id
       sortOrder: f.sortOrder,
     })),
   };
-
-  return <PageEditor initial={initial} />;
+  return NextResponse.json(body, { headers: { "Cache-Control": "no-store" } });
 }

@@ -165,6 +165,41 @@ export async function getRepo(token: string, owner: string, repo: string): Promi
   };
 }
 
+/** Commit sha at the tip of a branch. One cheap call; lets a cached snapshot prove it is current. */
+export async function getBranchHead(token: string, owner: string, repo: string, branch: string): Promise<string> {
+  const data = await gh<{ commit: { sha: string } }>(
+    token,
+    `${repoPath(owner, repo)}/branches/${encodeURIComponent(branch)}`,
+  );
+  return data.commit.sha;
+}
+
+/**
+ * The whole tree at `ref` as a gzipped tarball — one API call for every file
+ * in the project. GitHub answers with a redirect to its archive host.
+ */
+export async function downloadTarball(
+  token: string, owner: string, repo: string, ref: string, maxBytes: number,
+): Promise<Buffer> {
+  const url = `${API()}${repoPath(owner, repo)}/tarball/${encodeURIComponent(ref)}`;
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "LovableEditor",
+    },
+    cache: "no-store",
+    signal: AbortSignal.timeout(120_000),
+  });
+  if (!res.ok) throw new GithubError(`GitHub archive download failed (${res.status})`, res.status);
+  const declared = Number(res.headers.get("content-length") ?? 0);
+  if (declared > maxBytes) throw new GithubError("Repository archive is too large to snapshot", 413);
+  const buffer = Buffer.from(await res.arrayBuffer());
+  if (buffer.length > maxBytes) throw new GithubError("Repository archive is too large to snapshot", 413);
+  return buffer;
+}
+
 export type TreeEntry = { path: string; type: "blob" | "tree"; sha: string; size?: number };
 
 export async function getTree(token: string, owner: string, repo: string, branch: string): Promise<TreeEntry[]> {

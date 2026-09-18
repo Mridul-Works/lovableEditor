@@ -41,7 +41,19 @@ export const ALLOWED_FONT_TYPES: Record<string, string> = {
   "font/woff2": ".woff2",
 };
 
-const ALLOWED_UPLOAD_TYPES: Record<string, string> = { ...ALLOWED_IMAGE_TYPES, ...ALLOWED_FONT_TYPES };
+// Short clips (hero loops, campus films) imported from Lovable projects or
+// uploaded to a video field. Big productions stay hosted elsewhere.
+export const ALLOWED_VIDEO_TYPES: Record<string, string> = {
+  "video/mp4": ".mp4",
+  "video/webm": ".webm",
+  "video/quicktime": ".mov",
+};
+
+const ALLOWED_UPLOAD_TYPES: Record<string, string> = {
+  ...ALLOWED_IMAGE_TYPES,
+  ...ALLOWED_FONT_TYPES,
+  ...ALLOWED_VIDEO_TYPES,
+};
 
 const EXT_TO_TYPE = Object.fromEntries(
   Object.entries(ALLOWED_UPLOAD_TYPES).map(([type, ext]) => [ext, type]),
@@ -59,7 +71,7 @@ function sanitizeName(name: string) {
       .toLowerCase()
       .replace(/[^a-z0-9-_]+/g, "-")
       .replace(/^-+|-+$/g, "")
-      .slice(0, 48) || "image"
+      .slice(0, 48) || "file"
   );
 }
 

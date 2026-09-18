@@ -3,6 +3,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { RenderTree } from "@/components/RenderTree";
 import { EditOverlay } from "@/components/EditOverlay";
+import { PreviewBridge } from "@/components/PreviewBridge";
+import { QueryProvider } from "@/lib/query-client";
 import { getSession } from "@/lib/auth";
 import {
   PAGE_STATUS,
@@ -49,6 +51,9 @@ export default async function SitePage({ params, searchParams }: Props) {
 
   const values = fieldValues(page);
   const editMode = session !== null && sp.edit === "1";
+  // The admin editor loads the page in an iframe with ?preview=1: no banner,
+  // no overlay, just the page plus the bridge that applies live edits.
+  const previewMode = session !== null && sp.preview === "1";
 
   return (
     <>
@@ -58,7 +63,7 @@ export default async function SitePage({ params, searchParams }: Props) {
         <style dangerouslySetInnerHTML={{ __html: page.compiledCss }} />
       ) : null}
 
-      {session && page.status !== PAGE_STATUS.PUBLISHED ? (
+      {session && !previewMode && page.status !== PAGE_STATUS.PUBLISHED ? (
         <div className="sticky top-0 z-50 flex items-center justify-center gap-3 bg-amber-400 px-4 py-2 text-sm font-semibold text-amber-950">
           Draft — only admins can see this page.
           <Link href={`/admin/pages/${page.id}`} className="underline">Open in editor</Link>
@@ -67,7 +72,12 @@ export default async function SitePage({ params, searchParams }: Props) {
 
       <RenderTree tree={pageTree(page)} values={values} />
 
-      {editMode ? <EditOverlay route={route} /> : null}
+      {previewMode ? <PreviewBridge /> : null}
+      {editMode && !previewMode ? (
+        <QueryProvider>
+          <EditOverlay route={route} pageId={page.id} />
+        </QueryProvider>
+      ) : null}
     </>
   );
 }

@@ -17,7 +17,7 @@ export type ImportInput = {
   indexHtml?: string;
   assetUrls?: Map<string, string>;
   /** GitHub origin, when imported from a connected project. */
-  origin?: { repo: string; branch: string; path: string };
+  origin?: { repo: string; branch: string; path: string; commit?: string };
   /** Set when the bundler hit its file cap and some components were left out. */
   truncated?: boolean;
 };
@@ -47,7 +47,12 @@ export async function importPageFromSource(input: ImportInput): Promise<ImportOu
   const requestedTitle = input.title?.trim();
 
   const originData = input.origin
-    ? { sourceRepo: input.origin.repo, sourceBranch: input.origin.branch, sourcePath: input.origin.path }
+    ? {
+        sourceRepo: input.origin.repo,
+        sourceBranch: input.origin.branch,
+        sourcePath: input.origin.path,
+        sourceCommit: input.origin.commit ?? null,
+      }
     : {};
 
   const existing = await db.page.findUnique({

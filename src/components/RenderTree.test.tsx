@@ -78,3 +78,17 @@ test("a field-backed image URL is sanitised too", () => {
   const html = render([el("img", { src: { $f: "img" } })], { img: "javascript:alert(1)" });
   assert.doesNotMatch(html, /javascript:/i);
 });
+
+test("field-backed links, videos and backgrounds are announced for the editor", () => {
+  const html = render(
+    [
+      el("a", { href: { $f: "cta-a-1" } }, [{ t: "f", k: "cta-a-2" }]),
+      el("video", { src: { $f: "hero-video-1" } }),
+      el("div", { style: { backgroundImage: { $f: "hero-div-bg-1" } } }),
+    ],
+    { "cta-a-1": "https://example.com/apply", "cta-a-2": "Apply", "hero-video-1": "/uploads/x.mp4", "hero-div-bg-1": "/uploads/y.jpg" },
+  );
+  assert.match(html, /<a[^>]*data-cms-href="cta-a-1"[^>]*href="https:\/\/example.com\/apply"[^>]*data-cms-field="cta-a-2"/);
+  assert.match(html, /<video[^>]*src="\/uploads\/x.mp4"[^>]*data-cms-type="video"/);
+  assert.match(html, /<div[^>]*data-cms-bg="hero-div-bg-1"[^>]*style="background-image:url\(&quot;\/uploads\/y.jpg&quot;\)"/);
+});

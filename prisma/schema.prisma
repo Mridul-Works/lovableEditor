@@ -26,6 +26,9 @@ model Page {
   sourceRepo   String? // "owner/name"
   sourceBranch String?
   sourcePath   String? // e.g. "src/pages/Index.tsx"
+  // Commit of the source repo this page was last imported from. Compared with
+  // the branch head to tell which pages are behind the latest push.
+  sourceCommit String?
   fields      Field[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -61,7 +64,12 @@ model MediaAsset {
   width     Int?
   height    Int?
   size      Int      @default(0)
+  // Where an imported asset came from ("lovable:<asset_id>", "sha:<git blob>"),
+  // so a re-sync can reuse the stored copy instead of downloading it again.
+  sourceRef String?
   createdAt DateTime @default(now())
+
+  @@index([sourceRef])
 }
 
 model AdminUser {

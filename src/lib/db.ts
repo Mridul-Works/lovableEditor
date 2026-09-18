@@ -20,8 +20,15 @@ function createClient() {
   return new PrismaClient({ adapter: new PrismaBetterSqlite3({ url: `file:${absolute}` }) });
 }
 
-const globalForPrisma = globalThis as unknown as { prisma?: ReturnType<typeof createClient> };
+// Bump when the schema changes. The dev singleton survives hot reloads, so
+// without a versioned key it would keep using a client generated from the
+// previous schema and reject the new columns.
+const SCHEMA_VERSION = "20260917-source-commit";
 
-export const db = globalForPrisma.prisma ?? createClient();
+type Client = ReturnType<typeof createClient>;
+const globalForPrisma = globalThis as unknown as { prismaClients?: Record<string, Client> };
+const clients = globalForPrisma.prismaClients ?? (globalForPrisma.prismaClients = {});
 
-if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = db;
+export const db: Client = clients[SCHEMA_VERSION] ?? createClient();
+
+if (process.env.NODE_ENV !== "production") clients[SCHEMA_VERSION] = db;

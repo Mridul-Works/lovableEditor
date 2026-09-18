@@ -7,10 +7,10 @@ import { db } from "@/lib/db";
 import { TooManyAttemptsError, getSession, loginWithCredentials, logout, requireAdmin } from "@/lib/auth";
 import { normalizeRoute } from "@/lib/importer/extract";
 import { importPageFromSource } from "@/lib/importer/import-page";
-import { bundlePageFromRepo } from "@/lib/importer/bundle";
-import { getGithubToken, getRepo, getTree, setGithubToken, listRepos } from "@/lib/github";
+import { importRepoPage, type RepoPageResult } from "@/lib/importer/github-import";
+import { setGithubToken, listRepos } from "@/lib/github";
 import { pageCacheTag } from "@/lib/pages";
-import { ALLOWED_IMAGE_TYPES, storage } from "@/lib/storage";
+import { ALLOWED_IMAGE_TYPES, ALLOWED_VIDEO_TYPES, storage } from "@/lib/storage";
 import type { ImportReport } from "@/lib/tree";
 
 /**
@@ -142,15 +142,7 @@ export async function disconnectGithubAction() {
   revalidatePath("/admin/projects");
 }
 
-export type GithubImportState = {
-  error?: string;
-  report?: ImportReport;
-  pageId?: string;
-  route?: string;
-  reimported?: boolean;
-  filesBundled?: number;
-  assetsUploaded?: number;
-};
+export type GithubImportState = RepoPageResult;
 
 export async function importFromGithubAction(
   _prev: GithubImportState,
@@ -169,37 +161,7 @@ export async function importFromGithubAction(
   }
 
   try {
-    const token = await getGithubToken();
-    if (!token) return { error: "GitHub is not connected." };
-
-    const repoInfo = await getRepo(token, owner, repo);
-    const branch = repoInfo.defaultBranch;
-    const tree = await getTree(token, owner, repo, branch);
-    const bundle = await bundlePageFromRepo({ token, owner, repo, branch }, pagePath, tree);
-
-    const outcome = await importPageFromSource({
-      route,
-      source: bundle.source,
-      themeCss: bundle.themeCss,
-      tailwindConfig: bundle.tailwindConfig,
-      indexHtml: bundle.indexHtml,
-      assetUrls: bundle.assetUrls,
-      truncated: bundle.truncated,
-      origin: { repo: `${owner}/${repo}`, branch, path: pagePath },
-    });
-
-    revalidateTag(pageCacheTag(route), "max");
-    revalidatePath(route);
-    revalidatePath("/admin");
-    revalidatePath(`/admin/projects/${owner}/${repo}`);
-    return {
-      report: outcome.report,
-      pageId: outcome.pageId,
-      route,
-      reimported: outcome.reimported,
-      filesBundled: bundle.filesBundled.length,
-      assetsUploaded: bundle.assetsUploaded.length,
-    };
+    return await importRepoPage({ owner, repo, pagePath, route });
   } catch (e) {
     return { error: userMessage(e, "GitHub import failed.") };
   }
@@ -215,38 +177,8 @@ export async function syncPageAction(pageId: string): Promise<GithubImportState>
   }
 
   try {
-    const token = await getGithubToken();
-    if (!token) return { error: "GitHub is not connected." };
-
     const [owner, repo] = page.sourceRepo.split("/");
-    const repoInfo = await getRepo(token, owner, repo);
-    const branch = repoInfo.defaultBranch;
-    const tree = await getTree(token, owner, repo, branch);
-    const bundle = await bundlePageFromRepo({ token, owner, repo, branch }, page.sourcePath, tree);
-
-    const outcome = await importPageFromSource({
-      route: page.route,
-      source: bundle.source,
-      themeCss: bundle.themeCss,
-      tailwindConfig: bundle.tailwindConfig,
-      indexHtml: bundle.indexHtml,
-      assetUrls: bundle.assetUrls,
-      truncated: bundle.truncated,
-      origin: { repo: page.sourceRepo, branch, path: page.sourcePath },
-    });
-
-    revalidateTag(pageCacheTag(page.route), "max");
-    revalidatePath(page.route);
-    revalidatePath("/admin");
-    revalidatePath(`/admin/pages/${pageId}`);
-    return {
-      report: outcome.report,
-      pageId: outcome.pageId,
-      route: page.route,
-      reimported: outcome.reimported,
-      filesBundled: bundle.filesBundled.length,
-      assetsUploaded: bundle.assetsUploaded.length,
-    };
+    return await importRepoPage({ owner, repo, pagePath: page.sourcePath, route: page.route });
   } catch (e) {
     return { error: userMessage(e, "Sync failed.") };
   }
@@ -355,6 +287,7 @@ export type UploadResult = {
   asset?: { id: string; url: string; filename: string; width: number | null; height: number | null };
 };
 
+// Server actions accept 12MB bodies (next.config.ts), so the cap sits under that.
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
 export async function uploadMediaAction(formData: FormData): Promise<UploadResult> {
@@ -362,21 +295,28 @@ export async function uploadMediaAction(formData: FormData): Promise<UploadResul
 
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) return { ok: false, error: "No file provided." };
-  if (file.size > MAX_UPLOAD_BYTES) return { ok: false, error: "Image is larger than 10MB." };
-  if (!ALLOWED_IMAGE_TYPES[file.type]) {
-    return { ok: false, error: `Unsupported type ${file.type || "unknown"} — use PNG, JPEG, WebP, GIF, AVIF or SVG.` };
+  if (file.size > MAX_UPLOAD_BYTES) return { ok: false, error: "File is larger than 10MB." };
+  const isImage = Boolean(ALLOWED_IMAGE_TYPES[file.type]);
+  const isVideo = Boolean(ALLOWED_VIDEO_TYPES[file.type]);
+  if (!isImage && !isVideo) {
+    return {
+      ok: false,
+      error: `Unsupported type ${file.type || "unknown"} — use PNG, JPEG, WebP, GIF, AVIF, SVG, MP4 or WebM.`,
+    };
   }
 
   const buffer = Buffer.from(await file.arrayBuffer());
 
   let width: number | null = null;
   let height: number | null = null;
-  try {
-    const dim = imageSize(buffer);
-    width = dim.width ?? null;
-    height = dim.height ?? null;
-  } catch {
-    // dimensions are best-effort (e.g. some SVGs)
+  if (isImage) {
+    try {
+      const dim = imageSize(buffer);
+      width = dim.width ?? null;
+      height = dim.height ?? null;
+    } catch {
+      // dimensions are best-effort (e.g. some SVGs)
+    }
   }
 
   try {

@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 import { getSession } from "@/lib/auth";
 import { logoutAction } from "@/lib/actions";
+import { QueryProvider } from "@/lib/query-client";
 
 export default async function AdminLayout({ children }: { children: ReactNode }) {
   // The proxy gates /admin on the token's signature alone, which cannot see a
@@ -34,7 +35,9 @@ export default async function AdminLayout({ children }: { children: ReactNode })
           </form>
         </div>
       </aside>
-      <main className="min-w-0 flex-1 p-8">{children}</main>
+      <main className="min-w-0 flex-1 p-8">
+        <QueryProvider>{children}</QueryProvider>
+      </main>
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { createElement, type CSSProperties, type ReactNode } from "react";
+import { safeUrl } from "@/lib/safe-url";
 import { isFieldRef, type ElementNode, type PropValue, type TreeNode } from "@/lib/tree";
 
 // Renders a page's JSON tree. Field references are resolved against the
@@ -22,35 +23,11 @@ const BLOCKED_TAGS = new Set([
 
 const BLOCKED_PROPS = new Set(["dangerouslySetInnerHTML", "srcDoc", "ref", "key", "children"]);
 
-// Allowlist rather than a denylist: `data:text/html`, `vbscript:` and
-// tab-obfuscated `java<TAB>script:` all slip past a `javascript:` test, since
-// browsers strip whitespace inside a scheme before resolving it.
-const SAFE_SCHEME = /^(https?|mailto|tel|ftp):/i;
-// Inline media is safe to *load*; `data:text/html` is only dangerous when a
-// link navigates to it, so what counts as safe depends on the attribute.
-const SAFE_MEDIA_DATA = /^data:(image|video|audio|font)\//i;
-
-function safeUrl(value: string, kind: "src" | "href" = "href"): string {
-  const trimmed = value.trim();
-  if (trimmed === "") return "";
-  // Protocol-relative URLs silently inherit the scheme and leave the origin.
-  if (trimmed.startsWith("//")) return "#";
-  // Relative, root-relative, anchor and query URLs carry no scheme at all.
-  if (/^[.#/?]/.test(trimmed)) return trimmed;
-  // The scheme is everything up to the first ":", ignoring the control
-  // characters and whitespace a browser strips before resolving it.
-  const stripped = trimmed.replace(/[\s\u0000-\u001F]/g, "");
-  if (!stripped.includes(":")) return trimmed;
-  if (SAFE_SCHEME.test(stripped)) return trimmed;
-  if (kind === "src" && (SAFE_MEDIA_DATA.test(stripped) || /^blob:/i.test(stripped))) return trimmed;
-  return "#";
-}
-
 function resolveProp(
   name: string,
   value: PropValue,
   values: Record<string, string>,
-): { value: unknown; fieldKey?: string } {
+): { value: unknown; fieldKey?: string; bgFieldKeys?: string[] } {
   if (isFieldRef(value)) {
     const resolved = values[value.$f] ?? "";
     if (name === "src" || name === "poster") return { value: safeUrl(resolved, "src"), fieldKey: value.$f };
@@ -59,15 +36,17 @@ function resolveProp(
   }
   if (name === "style" && typeof value === "object") {
     const style: CSSProperties = {};
+    const bgFieldKeys: string[] = [];
     for (const [k, v] of Object.entries(value)) {
       if (isFieldRef(v)) {
         const url = values[v.$f] ?? "";
         (style as Record<string, unknown>)[k] = `url("${safeUrl(url, "src").replace(/"/g, "%22")}")`;
+        bgFieldKeys.push(v.$f);
       } else {
         (style as Record<string, unknown>)[k] = v;
       }
     }
-    return { value: style };
+    return { value: style, bgFieldKeys };
   }
   if ((name === "src" || name === "poster" || name === "srcSet") && typeof value === "string") {
     return { value: safeUrl(value, "src") };
@@ -88,16 +67,23 @@ function renderElement(
   const props: Record<string, unknown> = { key };
   let srcFieldKey: string | undefined;
 
+  // Every field-backed attribute is announced on the element, so the on-page
+  // editor and the live preview can find and update it without knowing the
+  // tree: data-cms-field/-type for the element's own content (text, image,
+  // video), data-cms-href for its link target, data-cms-bg for a CSS background.
   for (const [name, raw] of Object.entries(node.props)) {
     if (BLOCKED_PROPS.has(name) || /^on[A-Z]/.test(name)) continue;
-    const { value, fieldKey } = resolveProp(name, raw, values);
+    const { value, fieldKey, bgFieldKeys } = resolveProp(name, raw, values);
     if (name === "src" && fieldKey) srcFieldKey = fieldKey;
+    if (name === "href" && fieldKey) props["data-cms-href"] = fieldKey;
+    if (name === "poster" && fieldKey) props["data-cms-poster"] = fieldKey;
+    if (bgFieldKeys?.length) props["data-cms-bg"] = bgFieldKeys[0];
     props[name] = value;
   }
 
   if (srcFieldKey) {
     props["data-cms-field"] = srcFieldKey;
-    props["data-cms-type"] = "image";
+    props["data-cms-type"] = node.tag === "video" || node.tag === "audio" ? "video" : "image";
   }
 
   if (VOID_TAGS.has(node.tag)) {

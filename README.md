@@ -15,6 +15,22 @@ imports to bundle every section component, applies the project's `index.css` the
 uploads the repo's image assets into the media library. After design changes in Lovable,
 hit **Sync** on the page (pages list or project view) — content edits survive.
 
+**Syncing a whole project.** A Lovable project is a site, not a page. The project screen
+(**Admin → Lovable projects → a repo**) shows how many of its page files are imported and
+which are behind the latest push, and **Sync entire project** imports the missing pages
+and re-syncs the rest, three at a time, at each file's own route (`src/routes/a.b.tsx` →
+`/a/b`). New pages can be published as they land; existing pages keep their status and
+their edits. A route already used by a different source is reported, never overwritten.
+The repo is read from one branch tarball per commit (`src/lib/importer/snapshot.ts`)
+instead of hundreds of per-file API calls, so a 38-page project syncs in about a minute.
+
+Lovable projects reference media two ways and both are imported: image files committed
+to the repo (`import hero from "@/assets/hero.webp"`) and, in newer projects, JSON
+sidecars (`hero.webp.asset.json`) pointing at a file hosted by Lovable. Sidecar images
+are downloaded into the media library; videos and oversized files keep their hosted URL.
+Assets remember where they came from (`MediaAsset.sourceRef`), so a re-sync reuses the
+stored copies instead of downloading everything again.
+
 **Paste mode (fallback):**
 
 1. **Import** (`/admin/import`) — paste the exported page component (TSX/JSX) and pick a
@@ -27,9 +43,13 @@ hit **Sync** on the page (pages list or project view) — content edits survive.
 2. **Render** — a catch-all server component looks the route up in the DB and renders the
    tree, injecting each field's current value. Published pages are public; drafts 404
    publicly but render for admins with a Draft banner.
-3. **Edit** — either in the field editor (`/admin/pages/[id]`, grouped by page section)
-   or directly on the page (`/pricing?edit=1` as a logged-in admin: click text to edit in
-   place, click an image to replace it). Saves revalidate the route — live in seconds.
+3. **Edit** — either in the field editor (`/admin/pages/[id]`: fields grouped by page
+   section on the left, the live page on the right; typing updates the preview instantly
+   and clicking anything on the page jumps to its field) or directly on the page
+   (`/pricing?edit=1` as a logged-in admin: click text to edit in place, click an image
+   to replace it, click a link or video to change its URL, hover a background image for
+   a "Change background" button). Text, images, CSS backgrounds, link targets and video
+   sources are all fields. Saves revalidate the route — live in seconds.
 4. **Re-import** — paste an updated version of the page to the same route. Fields are
    matched by key: existing edits are kept, new content is added, removed content is
    flagged *orphaned* (kept in DB, not rendered).
@@ -65,7 +85,7 @@ Log in at `/admin/login` with the seeded credentials.
 
 - `npm run dev` / `build` / `start` — Next.js
 - `npm run db:migrate` / `db:seed` / `db:studio` — Prisma
-- `npx tsx scripts/e2e.ts` — full acceptance test (needs the app running on :3000 and Edge installed; `BASE=` overrides the URL)
+- `npx tsx scripts/e2e.ts` — full acceptance test (needs the app running on :4000 and Edge installed; `BASE=` overrides the URL)
 - GitHub-integration test: `npx tsx scripts/mock-github.ts` (mock API on :4599), then the app with `GITHUB_API_BASE=http://127.0.0.1:4599`, then `BASE=... npx tsx scripts/e2e-github.ts`
 - `NODE_OPTIONS=--conditions=react-server npx tsx scripts/test-extract.ts [file]` — run the extractor against a fixture
 
@@ -73,8 +93,17 @@ Log in at `/admin/login` with the seeded credentials.
 
 - **Imported code is data.** No eval, no compilation of user-pasted code. The extractor
   (`src/lib/importer/extract.ts`) resolves *static data only*: literal arrays are
-  expanded through `.map()`, `useState` initial values decide static conditionals, and
-  anything dynamic is dropped and reported.
+  expanded through `.map()`, `.filter()`, `.find()` and the "chunk into pages" `for`
+  loop; `useState` initial values decide conditionals; component-body locals are scoped
+  per component (import aliases such as `import { pgpHero as hero }` per file) so two
+  components' `active` never collide; `useMemo`, `reduce`, `new Set(...).size`,
+  `Object.entries`, optional chains and helper guard clauses are evaluated; scroll-driven decks (a
+  `340vh` runway with a sticky child and stacked panels) are laid out as a plain
+  sequence. Anything still dynamic is dropped and reported.
+- **Data files and globs.** The GitHub bundler inlines `import data from "./x.json"`
+  and expands `import.meta.glob("/src/assets/**/*.asset.json")` against the repo tree,
+  uploading the matched Lovable-hosted images, so galleries driven by a JSON table
+  render with their photos.
 - **Per-page CSS.** Tailwind can't see class names stored in the DB at build time, so
   `src/lib/importer/tailwind.ts` compiles the page's class list with Tailwind's
   programmatic API at import time (with default shadcn tokens; paste the Lovable
@@ -84,7 +113,13 @@ Log in at `/admin/login` with the seeded credentials.
 - **Auth.** Credentials → bcrypt hash check → HS256 JWT session cookie; `src/proxy.ts`
   gates all `/admin` routes, and every server action re-checks the session
   (`requireAdmin`).
-- **Storage.** All image bytes go through `src/lib/storage.ts` (local driver included;
+- **Editor state.** The admin editor (`src/components/admin/editor/`) keeps saved fields
+  in TanStack Query (seeded from the server, refetched from `/api/admin/pages/[id]/fields`
+  after each save) and unsaved drafts in local state; the field list is virtualized with
+  TanStack Virtual, so thousand-field pages stay responsive. The live preview is the
+  real page in an iframe (`?preview=1`); `src/components/PreviewBridge.tsx` applies
+  edits over `postMessage` using the `data-cms-*` attributes the renderer emits.
+- **Storage.** All media bytes go through `src/lib/storage.ts` (local driver included;
   S3-compatible drivers plug in behind the same interface). Files are served by
   `/uploads/[...file]` with immutable caching — content-hashed filenames.
 
@@ -92,8 +127,15 @@ Log in at `/admin/login` with the seeded credentials.
 
 - Interactive behavior in imported pages (state, handlers, animations) is stripped by
   design; the import report lists everything that was removed.
-- Image files imported from the Lovable project (`import hero from "@/assets/…"`) can't
-  be resolved from pasted code — they get a placeholder and a report note; upload the
-  real image in the editor.
+- In *paste* mode, image imports (`import hero from "@/assets/…"`) have no file to
+  resolve to — they get a placeholder and a report note; GitHub imports resolve them.
+  Images whose URL is computed by runtime-only code (a helper that searches a lookup
+  table with `String.includes` and builds a `URLSearchParams` query, for example) fall
+  back to a placeholder; upload the real image in the editor.
+- `npm run build` needs no network access: the admin UI uses the platform font stack
+  instead of a Google font fetched at build time.
+- Field keys include the section name, so a Lovable redesign that moves content between
+  sections re-keys those fields on the next sync: previous edits to them are kept as
+  orphans in the editor rather than applied automatically.
 - `next/image` is intentionally not used for imported content (arbitrary hosts + data
   URIs); images render as plain `<img>`.

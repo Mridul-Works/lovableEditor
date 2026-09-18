@@ -36,9 +36,21 @@ export type FieldTextNode = { t: "f"; k: string };
 
 export type TreeNode = ElementNode | TextNode | FieldTextNode;
 
+export type FieldType = "TEXT" | "IMAGE" | "LINK" | "VIDEO";
+
+export const FIELD_TYPES: readonly FieldType[] = ["TEXT", "IMAGE", "LINK", "VIDEO"];
+
+export function isFieldType(v: unknown): v is FieldType {
+  return typeof v === "string" && (FIELD_TYPES as readonly string[]).includes(v);
+}
+
 export type ImportReport = {
   textFields: number;
   imageFields: number;
+  /** Editable link targets (href). Absent on reports written before links became fields. */
+  linkFields?: number;
+  /** Editable video sources. Absent on older reports. */
+  videoFields?: number;
   /** Event handler prop names that were stripped (onClick, ...). */
   strippedHandlers: string[];
   /** Dynamic expressions that could not be converted, as short source snippets. */
@@ -55,7 +67,7 @@ export type ImportReport = {
 
 export type ExtractedField = {
   key: string;
-  type: "TEXT" | "IMAGE";
+  type: FieldType;
   defaultValue: string;
   label: string;
   section: string;

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { findPageFiles, suggestRoute } from "./bundle";
+import { expandGlob, findPageFiles, globKey, globToRegExp, parseLovableSidecar, suggestRoute } from "./bundle";
 import type { TreeEntry } from "@/lib/github";
 
 const blobs = (...paths: string[]): TreeEntry[] =>
@@ -68,4 +68,62 @@ test("suggestRoute understands TanStack dot- and directory-nesting", () => {
   assert.equal(suggestRoute("src/routes/posts/index.tsx"), "/posts");
   // Pathless layout segments contribute no path of their own.
   assert.equal(suggestRoute("src/routes/_layout.settings.tsx"), "/settings");
+});
+
+// Newer Lovable projects keep binaries out of git and commit a JSON sidecar
+// pointing at the hosted file instead.
+
+test("a Lovable sidecar resolves to the project's asset host", () => {
+  const side = parseLovableSidecar(JSON.stringify({
+    version: 1,
+    asset_id: "1e051b66-328e-4610-8744-34733b8649f2",
+    project_id: "79e3b574-96e7-4811-a43f-99492a9fe2c6",
+    url: "/__l5e/assets-v1/1e051b66-328e-4610-8744-34733b8649f2/ManojKohli.webp",
+    original_filename: "ManojKohli.webp",
+    size: 36946,
+    content_type: "image/webp",
+  }), "fallback.webp");
+  assert.ok(side);
+  assert.equal(
+    side.url,
+    "https://79e3b574-96e7-4811-a43f-99492a9fe2c6.lovableproject.com/__l5e/assets-v1/1e051b66-328e-4610-8744-34733b8649f2/ManojKohli.webp",
+  );
+  assert.equal(side.assetId, "1e051b66-328e-4610-8744-34733b8649f2");
+  assert.equal(side.contentType, "image/webp");
+  assert.equal(side.filename, "ManojKohli.webp");
+});
+
+test("a sidecar with an absolute URL is taken as-is; garbage is rejected", () => {
+  const abs = parseLovableSidecar(JSON.stringify({ url: "https://cdn.example.com/a/b.png" }), "x.png");
+  assert.equal(abs?.url, "https://cdn.example.com/a/b.png");
+  assert.equal(abs?.filename, "b.png");
+  assert.equal(parseLovableSidecar("not json", "x.png"), null);
+  assert.equal(parseLovableSidecar(JSON.stringify({ url: "/relative/no/project" }), "x.png"), null);
+  assert.equal(parseLovableSidecar(JSON.stringify({ url: "/x", project_id: "evil.host/../" }), "x.png"), null);
+});
+
+// import.meta.glob — Vite resolves it at build time; the bundler has to do
+// the same against the repo tree so galleries keyed by file path resolve.
+
+test("globs expand against the repo tree and key the way Vite does", () => {
+  const paths = [
+    "src/assets/meet-masters/a.png.asset.json",
+    "src/assets/meet-masters/b.webp.asset.json",
+    "src/assets/other/c.png.asset.json",
+    "src/components/x.tsx",
+  ];
+  assert.deepEqual(expandGlob("/src/assets/meet-masters/*.asset.json", "src/lib/meet.ts", paths), [
+    "src/assets/meet-masters/a.png.asset.json",
+    "src/assets/meet-masters/b.webp.asset.json",
+  ]);
+  assert.deepEqual(expandGlob("../assets/**/*.asset.json", "src/lib/meet.ts", paths), [
+    "src/assets/meet-masters/a.png.asset.json",
+    "src/assets/meet-masters/b.webp.asset.json",
+    "src/assets/other/c.png.asset.json",
+  ]);
+  assert.equal(globKey("/src/assets/meet-masters/*.asset.json", "src/assets/meet-masters/a.png.asset.json", "src/lib/meet.ts"), "/src/assets/meet-masters/a.png.asset.json");
+  assert.equal(globKey("../assets/**/*.asset.json", "src/assets/other/c.png.asset.json", "src/lib/meet.ts"), "../assets/other/c.png.asset.json");
+  assert.ok(globToRegExp("src/a/*.png").test("src/a/x.png"));
+  assert.ok(!globToRegExp("src/a/*.png").test("src/a/b/x.png"));
+  assert.ok(globToRegExp("src/**/*.png").test("src/a/b/x.png"));
 });

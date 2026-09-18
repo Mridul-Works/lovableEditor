@@ -7,7 +7,7 @@ async function main() {
   const browser = await chromium.launch({ channel: "msedge" });
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await ctx.newPage();
-  await page.goto(`http://localhost:3000${route}`);
+  await page.goto(`http://localhost:4000${route}`);
   await page.waitForTimeout(1000);
   await page.screenshot({ path: out, fullPage: true });
   await browser.close();

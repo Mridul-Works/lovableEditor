@@ -1,16 +1,10 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+// The admin UI uses the platform's own sans-serif stack rather than a Google
+// font: next/font/google downloads at build time, which makes the production
+// build depend on reaching fonts.googleapis.com. Imported pages are unaffected —
+// they carry their own fonts in the CSS compiled at import time.
 
 export const metadata: Metadata = {
   title: "LovableEditor",
@@ -19,7 +13,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+    <html lang="en" className="antialiased">
       <body>{children}</body>
     </html>
   );

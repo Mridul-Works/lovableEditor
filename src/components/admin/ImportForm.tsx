@@ -99,6 +99,8 @@ export function ImportForm() {
           <dl className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
             <Stat label="Text fields" value={report.textFields} />
             <Stat label="Image fields" value={report.imageFields} />
+            <Stat label="Link fields" value={report.linkFields ?? 0} />
+            <Stat label="Video fields" value={report.videoFields ?? 0} />
             {report.merge ? (
               <>
                 <Stat label="Kept (edits preserved)" value={report.merge.kept} />
